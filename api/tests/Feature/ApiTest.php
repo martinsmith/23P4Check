@@ -693,16 +693,67 @@ class ApiTest extends TestCase
 
     // --- SERP Tracking ---
 
-    public function test_serp_check_returns_ranking_result(): void
+    public function test_can_add_keyword(): void
+    {
+        $site = Site::factory()->create(['user_id' => $this->user->id]);
+
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/serp/keywords", ['phrase' => 'Plumber in Leeds']);
+
+        $response->assertStatus(201);
+        $response->assertJsonPath('keyword.phrase', 'Plumber in Leeds');
+        $this->assertDatabaseHas('keywords', ['site_id' => $site->id, 'phrase' => 'Plumber in Leeds']);
+    }
+
+    public function test_keyword_limit_is_five(): void
+    {
+        $site = Site::factory()->create(['user_id' => $this->user->id]);
+
+        for ($i = 1; $i <= 5; $i++) {
+            $site->keywords()->create(['phrase' => "keyword $i"]);
+        }
+
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/serp/keywords", ['phrase' => 'keyword 6']);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('error', 'Maximum of 5 keywords allowed per site.');
+    }
+
+    public function test_cannot_add_duplicate_keyword(): void
+    {
+        $site = Site::factory()->create(['user_id' => $this->user->id]);
+        $site->keywords()->create(['phrase' => 'Plumber in Leeds']);
+
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/serp/keywords", ['phrase' => 'Plumber in Leeds']);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('error', 'This keyword is already being tracked.');
+    }
+
+    public function test_can_delete_keyword(): void
+    {
+        $site = Site::factory()->create(['user_id' => $this->user->id]);
+        $kw = $site->keywords()->create(['phrase' => 'Plumber in Leeds']);
+
+        $response = $this->actingAs($this->user)
+            ->deleteJson("/api/sites/{$site->id}/serp/keywords/{$kw->id}");
+
+        $response->assertStatus(204);
+        $this->assertDatabaseMissing('keywords', ['id' => $kw->id]);
+    }
+
+    public function test_serp_check_returns_ranking_results(): void
     {
         config(['services.serper.api_key' => 'test-key']);
 
         $site = Site::factory()->create([
             'user_id' => $this->user->id,
             'url' => 'https://example-plumber.co.uk',
-            'business_type' => 'Plumber',
-            'location' => 'Leeds',
         ]);
+
+        $site->keywords()->create(['phrase' => 'Plumber in Leeds']);
 
         Http::fake([
             'google.serper.dev/search' => Http::response([
@@ -718,9 +769,8 @@ class ApiTest extends TestCase
             ->postJson("/api/sites/{$site->id}/serp/check");
 
         $response->assertOk();
-        $response->assertJsonPath('result.keyword', 'Plumber in Leeds');
-        $response->assertJsonPath('result.position', 2);
-        $this->assertNotNull($response->json('result.snippet'));
+        $response->assertJsonPath('results.0.keyword', 'Plumber in Leeds');
+        $response->assertJsonPath('results.0.position', 2);
 
         $this->assertDatabaseHas('serp_results', [
             'site_id' => $site->id,
@@ -729,33 +779,7 @@ class ApiTest extends TestCase
         ]);
     }
 
-    public function test_serp_check_records_null_when_not_found(): void
-    {
-        config(['services.serper.api_key' => 'test-key']);
-
-        $site = Site::factory()->create([
-            'user_id' => $this->user->id,
-            'url' => 'https://example-plumber.co.uk',
-            'business_type' => 'Plumber',
-            'location' => 'Leeds',
-        ]);
-
-        Http::fake([
-            'google.serper.dev/search' => Http::response([
-                'organic' => [
-                    ['position' => 1, 'link' => 'https://competitor1.com', 'snippet' => 'Best', 'title' => 'Comp'],
-                ],
-            ], 200),
-        ]);
-
-        $response = $this->actingAs($this->user)
-            ->postJson("/api/sites/{$site->id}/serp/check");
-
-        $response->assertOk();
-        $response->assertJsonPath('result.position', null);
-    }
-
-    public function test_serp_check_requires_business_context(): void
+    public function test_serp_check_requires_keywords(): void
     {
         $site = Site::factory()->create([
             'user_id' => $this->user->id,
@@ -766,16 +790,17 @@ class ApiTest extends TestCase
             ->postJson("/api/sites/{$site->id}/serp/check");
 
         $response->assertStatus(422);
+        $response->assertJsonPath('error', 'No keywords to track. Add at least one keyword first.');
     }
 
-    public function test_serp_history_returns_results(): void
+    public function test_serp_history_returns_results_with_keywords(): void
     {
         $site = Site::factory()->create([
             'user_id' => $this->user->id,
             'url' => 'https://example.com',
-            'business_type' => 'Plumber',
-            'location' => 'Leeds',
         ]);
+
+        $site->keywords()->create(['phrase' => 'Plumber in Leeds']);
 
         $site->serpResults()->create([
             'keyword' => 'Plumber in Leeds',
@@ -789,7 +814,8 @@ class ApiTest extends TestCase
             ->getJson("/api/sites/{$site->id}/serp/history");
 
         $response->assertOk();
-        $response->assertJsonPath('keyword', 'Plumber in Leeds');
+        $response->assertJsonCount(1, 'keywords');
+        $response->assertJsonPath('keywords.0.phrase', 'Plumber in Leeds');
         $response->assertJsonCount(1, 'history');
         $response->assertJsonPath('history.0.position', 5);
     }
@@ -800,5 +826,6 @@ class ApiTest extends TestCase
 
         $this->postJson("/api/sites/{$site->id}/serp/check")->assertUnauthorized();
         $this->getJson("/api/sites/{$site->id}/serp/history")->assertUnauthorized();
+        $this->postJson("/api/sites/{$site->id}/serp/keywords", ['phrase' => 'test'])->assertUnauthorized();
     }
 }

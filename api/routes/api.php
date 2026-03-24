@@ -35,6 +35,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/sites/{site}/competitors/results', [CompetitorScanController::class, 'results']);
 
     // SERP tracking
+    Route::get('/sites/{site}/serp/keywords', [SerpController::class, 'keywords']);
+    Route::post('/sites/{site}/serp/keywords', [SerpController::class, 'storeKeyword']);
+    Route::delete('/sites/{site}/serp/keywords/{keyword}', [SerpController::class, 'destroyKeyword']);
     Route::post('/sites/{site}/serp/check', [SerpController::class, 'check']);
     Route::get('/sites/{site}/serp/history', [SerpController::class, 'history']);
 });

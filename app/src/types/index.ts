@@ -117,6 +117,11 @@ export interface CompetitorComparisonData {
   competitors: CompetitorResult[]
 }
 
+export interface SerpKeyword {
+  id: number
+  phrase: string
+}
+
 export interface SerpResultEntry {
   id: number
   keyword: string
@@ -128,7 +133,7 @@ export interface SerpResultEntry {
 }
 
 export interface SerpHistoryData {
-  keyword: string | null
+  keywords: SerpKeyword[]
   history: SerpResultEntry[]
 }
 

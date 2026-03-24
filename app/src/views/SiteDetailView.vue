@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
 import { useAuth } from '../composables/useAuth'
-import type { Site, Mission, DashboardData, CompetitorComparisonData, SerpHistoryData, SerpResultEntry } from '../types'
+import type { Site, Mission, DashboardData, CompetitorComparisonData, SerpHistoryData, SerpResultEntry, SerpKeyword } from '../types'
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()
@@ -234,23 +234,63 @@ const allCheckSlugs = Object.keys(checkMeta)
 // SERP Rankings
 const serpData = ref<SerpHistoryData | null>(null)
 const checkingSerp = ref(false)
+const selectedKeyword = ref<string | null>(null)
+const newKeyword = ref('')
+const addingKeyword = ref(false)
 
 async function loadSerpHistory() {
   try {
     serpData.value = await api.get<SerpHistoryData>(`/sites/${props.id}/serp/history`)
+    // Auto-select first keyword if none selected
+    if (!selectedKeyword.value && serpData.value?.keywords?.length) {
+      selectedKeyword.value = serpData.value.keywords[0].phrase
+    }
   } catch {}
 }
+
+const filteredHistory = computed(() => {
+  if (!serpData.value?.history) return []
+  if (!selectedKeyword.value) return serpData.value.history
+  return serpData.value.history.filter(r => r.keyword === selectedKeyword.value)
+})
 
 async function triggerSerpCheck() {
   checkingSerp.value = true
   error.value = ''
   try {
-    await api.post<{ result: SerpResultEntry }>(`/sites/${props.id}/serp/check`)
+    await api.post(`/sites/${props.id}/serp/check`)
     await loadSerpHistory()
   } catch (e: any) {
     error.value = e.message
   } finally {
     checkingSerp.value = false
+  }
+}
+
+async function addKeyword() {
+  if (!newKeyword.value.trim()) return
+  addingKeyword.value = true
+  error.value = ''
+  try {
+    await api.post(`/sites/${props.id}/serp/keywords`, { phrase: newKeyword.value.trim() })
+    newKeyword.value = ''
+    await loadSerpHistory()
+  } catch (e: any) {
+    error.value = e.message
+  } finally {
+    addingKeyword.value = false
+  }
+}
+
+async function removeKeyword(kw: SerpKeyword) {
+  try {
+    await api.del(`/sites/${props.id}/serp/keywords/${kw.id}`)
+    if (selectedKeyword.value === kw.phrase) {
+      selectedKeyword.value = null
+    }
+    await loadSerpHistory()
+  } catch (e: any) {
+    error.value = e.message
   }
 }
 
@@ -396,7 +436,7 @@ onMounted(async () => {
         <nav class="sub-tabs">
           <button class="sub-tab" :class="{ active: healthSubTab === 'checks' }" @click="healthSubTab = 'checks'">Your Checks</button>
           <button v-if="site?.competitors?.length" class="sub-tab" :class="{ active: healthSubTab === 'competitors' }" @click="healthSubTab = 'competitors'">Competitors</button>
-          <button v-if="hasBusinessContext" class="sub-tab" :class="{ active: healthSubTab === 'rankings' }" @click="healthSubTab = 'rankings'">Rankings</button>
+          <button class="sub-tab" :class="{ active: healthSubTab === 'rankings' }" @click="healthSubTab = 'rankings'">Rankings</button>
         </nav>
 
         <!-- Sub-tab: Your Checks -->
@@ -508,37 +548,58 @@ onMounted(async () => {
 
         <!-- Sub-tab: Rankings -->
         <div v-if="healthSubTab === 'rankings'" class="rankings-tab">
-          <div class="rankings-header">
-            <div>
-              <p class="rankings-keyword" v-if="serpData?.keyword">
-                Tracking: <strong>"{{ serpData.keyword }}"</strong>
-              </p>
-              <p class="rankings-intro">See where your site appears in Google search results for your primary keyword.</p>
+          <!-- Keyword Management -->
+          <div class="kw-management">
+            <div class="kw-header">
+              <div>
+                <h3 class="section-title">Tracked Keywords</h3>
+                <p class="rankings-intro">Add up to 5 keywords to track your Google rankings.</p>
+              </div>
+              <button class="btn-primary" @click="triggerSerpCheck" :disabled="checkingSerp || !serpData?.keywords?.length">
+                <span v-if="checkingSerp" class="spinner" /> {{ checkingSerp ? 'Checking…' : 'Check All Rankings' }}
+              </button>
             </div>
-            <button class="btn-primary" @click="triggerSerpCheck" :disabled="checkingSerp">
-              <span v-if="checkingSerp" class="spinner" /> {{ checkingSerp ? 'Checking…' : 'Check Ranking' }}
-            </button>
+
+            <!-- Add keyword form -->
+            <form class="kw-add-form" @submit.prevent="addKeyword" v-if="!serpData?.keywords || serpData.keywords.length < 5">
+              <input v-model="newKeyword" type="text" placeholder="e.g. Lift Engineer in Leeds" class="kw-input" :disabled="addingKeyword" />
+              <button type="submit" class="btn-secondary" :disabled="addingKeyword || !newKeyword.trim()">
+                <span v-if="addingKeyword" class="spinner" /> Add
+              </button>
+            </form>
+
+            <!-- Keyword list -->
+            <div v-if="serpData?.keywords?.length" class="kw-list">
+              <button
+                v-for="kw in serpData.keywords" :key="kw.id"
+                class="kw-chip" :class="{ active: selectedKeyword === kw.phrase }"
+                @click="selectedKeyword = kw.phrase"
+              >
+                <span class="kw-chip-text">{{ kw.phrase }}</span>
+                <span class="kw-chip-remove" @click.stop="removeKeyword(kw)" title="Remove keyword">×</span>
+              </button>
+            </div>
           </div>
 
-          <!-- Current position hero -->
-          <div v-if="serpData?.history?.length" class="serp-current">
-            <div class="serp-position-card" :class="positionClass(serpData.history[0].position)">
+          <!-- Current position hero (for selected keyword) -->
+          <div v-if="filteredHistory.length" class="serp-current">
+            <div class="serp-position-card" :class="positionClass(filteredHistory[0].position)">
               <span class="serp-pos-label">Current Position</span>
-              <span class="serp-pos-value">{{ positionLabel(serpData.history[0].position) }}</span>
-              <span class="serp-pos-date">{{ new Date(serpData.history[0].checked_at).toLocaleDateString() }}</span>
+              <span class="serp-pos-value">{{ positionLabel(filteredHistory[0].position) }}</span>
+              <span class="serp-pos-date">{{ new Date(filteredHistory[0].checked_at).toLocaleDateString() }}</span>
             </div>
-            <div v-if="serpData.history[0].snippet" class="serp-snippet-card">
+            <div v-if="filteredHistory[0].snippet" class="serp-snippet-card">
               <span class="serp-snippet-label">Google Snippet</span>
-              <p class="serp-snippet-text">{{ serpData.history[0].snippet }}</p>
-              <a v-if="serpData.history[0].result_url" :href="serpData.history[0].result_url" target="_blank" class="serp-snippet-url">
-                {{ serpData.history[0].result_url }}
+              <p class="serp-snippet-text">{{ filteredHistory[0].snippet }}</p>
+              <a v-if="filteredHistory[0].result_url" :href="filteredHistory[0].result_url" target="_blank" class="serp-snippet-url">
+                {{ filteredHistory[0].result_url }}
               </a>
             </div>
           </div>
 
           <!-- History chart -->
-          <div v-if="serpData && serpData.history.length > 1" class="serp-history-section">
-            <h3 class="section-title">Ranking History</h3>
+          <div v-if="filteredHistory.length > 1" class="serp-history-section">
+            <h3 class="section-title">Ranking History — "{{ selectedKeyword }}"</h3>
             <div class="serp-chart">
               <div class="serp-chart-y-axis">
                 <span>#1</span>
@@ -548,7 +609,7 @@ onMounted(async () => {
                 <span>#100</span>
               </div>
               <div class="serp-chart-bars">
-                <div v-for="(r, i) in [...serpData.history].reverse()" :key="i" class="serp-bar-group">
+                <div v-for="(r, i) in [...filteredHistory].reverse()" :key="i" class="serp-bar-group">
                   <div class="serp-bar-wrap">
                     <div
                       v-if="r.position !== null"
@@ -572,19 +633,21 @@ onMounted(async () => {
           </div>
 
           <!-- History table -->
-          <div v-if="serpData && serpData.history.length" class="serp-table-section">
+          <div v-if="filteredHistory.length" class="serp-table-section">
             <h3 class="section-title">Check Log</h3>
             <table class="serp-table">
               <thead>
                 <tr>
                   <th>Date</th>
+                  <th>Keyword</th>
                   <th>Position</th>
                   <th>URL</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="r in serpData.history" :key="r.id">
+                <tr v-for="r in filteredHistory" :key="r.id">
                   <td>{{ new Date(r.checked_at).toLocaleDateString() }}</td>
+                  <td class="serp-kw-cell">{{ r.keyword }}</td>
                   <td><span class="serp-pos-badge" :class="positionClass(r.position)">{{ positionLabel(r.position) }}</span></td>
                   <td class="serp-url-cell">{{ r.result_url || '—' }}</td>
                 </tr>
@@ -592,8 +655,11 @@ onMounted(async () => {
             </table>
           </div>
 
-          <div v-if="!serpData?.history?.length" class="empty">
-            <p>Click "Check Ranking" to see where your site appears for "{{ serpData?.keyword || 'your keyword' }}" in Google.</p>
+          <div v-if="!serpData?.keywords?.length" class="empty">
+            <p>Add keywords above to start tracking your Google rankings.</p>
+          </div>
+          <div v-else-if="!filteredHistory.length && selectedKeyword" class="empty">
+            <p>No ranking data yet for "{{ selectedKeyword }}". Click "Check All Rankings" to fetch results.</p>
           </div>
         </div>
       </div>
@@ -1094,12 +1160,47 @@ main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
 
 /* Rankings / SERP tab */
 .rankings-tab { padding-top: 0.5rem; }
-.rankings-header {
-  display: flex; align-items: flex-start; justify-content: space-between;
-  margin-bottom: 1.5rem; gap: 1rem; flex-wrap: wrap;
-}
-.rankings-keyword { font-size: 0.9375rem; color: var(--text-primary); margin: 0 0 0.25rem; }
 .rankings-intro { font-size: 0.8125rem; color: var(--text-secondary); margin: 0; }
+
+/* Keyword management */
+.kw-management { margin-bottom: 1.5rem; }
+.kw-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 1rem; gap: 1rem; flex-wrap: wrap;
+}
+.kw-add-form {
+  display: flex; gap: 0.5rem; margin-bottom: 1rem;
+}
+.kw-input {
+  flex: 1; max-width: 360px; padding: 0.5rem 0.75rem; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 0.875rem; background: var(--surface-1);
+  color: var(--text-primary);
+}
+.kw-input:focus { outline: none; border-color: var(--accent); }
+.kw-list {
+  display: flex; flex-wrap: wrap; gap: 0.5rem;
+}
+.kw-chip {
+  display: inline-flex; align-items: center; gap: 0.375rem;
+  padding: 0.375rem 0.5rem 0.375rem 0.75rem; border-radius: 999px;
+  font-size: 0.8125rem; cursor: pointer; border: 1px solid var(--border);
+  background: var(--surface-1); color: var(--text-secondary);
+  transition: all 0.15s;
+}
+.kw-chip:hover { border-color: var(--accent); color: var(--text-primary); }
+.kw-chip.active {
+  background: oklch(0.92 0.06 220); border-color: oklch(0.6 0.15 220);
+  color: oklch(0.35 0.12 220); font-weight: 600;
+}
+.kw-chip-text { white-space: nowrap; }
+.kw-chip-remove {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%; font-size: 0.875rem;
+  line-height: 1; color: var(--text-tertiary); background: transparent;
+  transition: all 0.15s;
+}
+.kw-chip-remove:hover { background: oklch(0.6 0.15 25 / 0.15); color: oklch(0.5 0.15 25); }
+.serp-kw-cell { font-size: 0.75rem; color: var(--text-secondary); max-width: 200px; }
 
 .serp-current {
   display: grid; grid-template-columns: auto 1fr; gap: 1rem; margin-bottom: 2rem;

@@ -9,28 +9,41 @@ use Illuminate\Support\Facades\Http;
 class SerpService
 {
     /**
-     * Check the site's ranking for its primary keyword.
-     * Primary keyword = "{business_type} in {location}"
+     * Check all tracked keywords for a site.
+     *
+     * @return SerpResult[]
      */
-    public function check(Site $site): ?SerpResult
+    public function checkAll(Site $site): array
     {
-        $keyword = $this->buildKeyword($site);
-        if (!$keyword) {
+        $keywords = $site->keywords;
+        $results = [];
+
+        foreach ($keywords as $kw) {
+            $result = $this->checkKeyword($site, $kw->phrase);
+            if ($result) {
+                $results[] = $result;
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Check the site's ranking for a specific keyword.
+     */
+    public function checkKeyword(Site $site, string $keyword): ?SerpResult
+    {
+        $organic = $this->search($keyword);
+        if ($organic === null) {
             return null;
         }
 
-        $results = $this->search($keyword);
-        if ($results === null) {
-            return null;
-        }
-
-        // Find the site's position in the results
         $siteDomain = $this->extractDomain($site->url);
         $position = null;
         $resultUrl = null;
         $snippet = null;
 
-        foreach ($results as $result) {
+        foreach ($organic as $result) {
             $resultDomain = $this->extractDomain($result['link'] ?? '');
             if ($resultDomain && $siteDomain && str_contains($resultDomain, $siteDomain)) {
                 $position = $result['position'] ?? null;
@@ -45,20 +58,8 @@ class SerpService
             'position'      => $position,
             'result_url'    => $resultUrl,
             'snippet'       => $snippet,
-            'total_results' => count($results),
+            'total_results' => count($organic),
         ]);
-    }
-
-    /**
-     * Build the primary keyword from business context.
-     */
-    public function buildKeyword(Site $site): ?string
-    {
-        if (empty($site->business_type) || empty($site->location)) {
-            return null;
-        }
-
-        return $site->business_type . ' in ' . $site->location;
     }
 
     /**
