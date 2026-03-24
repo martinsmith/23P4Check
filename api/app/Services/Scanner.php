@@ -54,9 +54,9 @@ class Scanner
         $results['title'] = $title;
 
         if (empty($title)) {
-            $this->createFinding($site, 'missing_title', 'Page has no title tag', 'high');
+            $this->createFinding($site, 'title', 'Page has no title tag', 'high');
         } elseif (mb_strlen($title) > 60) {
-            $this->createFinding($site, 'long_title', "Title is " . mb_strlen($title) . " chars (recommended: under 60)", 'medium');
+            $this->createFinding($site, 'title', "Title is " . mb_strlen($title) . " chars (recommended: under 60)", 'medium');
         } else {
             $this->createPassedFinding($site, 'title', 'Title tag is present and within recommended length');
         }
@@ -69,9 +69,9 @@ class Scanner
         $results['meta_description'] = $desc;
 
         if (empty($desc)) {
-            $this->createFinding($site, 'missing_meta_desc', 'Page has no meta description', 'high');
+            $this->createFinding($site, 'meta_description', 'Page has no meta description', 'high');
         } elseif (mb_strlen($desc) > 160) {
-            $this->createFinding($site, 'long_meta_desc', "Meta description is " . mb_strlen($desc) . " chars (recommended: under 160)", 'low');
+            $this->createFinding($site, 'meta_description', "Meta description is " . mb_strlen($desc) . " chars (recommended: under 160)", 'low');
         } else {
             $this->createPassedFinding($site, 'meta_description', 'Meta description is present and within recommended length');
         }
@@ -85,9 +85,9 @@ class Scanner
         $results['h1_text'] = $matches[1][0] ?? null;
 
         if ($count === 0) {
-            $this->createFinding($site, 'missing_h1', 'Page has no H1 heading', 'high');
+            $this->createFinding($site, 'h1', 'Page has no H1 heading', 'high');
         } elseif ($count > 1) {
-            $this->createFinding($site, 'multiple_h1', "Page has {$count} H1 headings (recommended: 1)", 'medium');
+            $this->createFinding($site, 'h1', "Page has {$count} H1 headings (recommended: 1)", 'medium');
         } else {
             $this->createPassedFinding($site, 'h1', 'Page has a single H1 heading');
         }
@@ -96,9 +96,9 @@ class Scanner
     private function checkTtfb(Site $site, int $ttfb, array &$results): void
     {
         if ($ttfb > 800) {
-            $this->createFinding($site, 'slow_ttfb', "TTFB is {$ttfb}ms (should be under 800ms)", 'high');
+            $this->createFinding($site, 'ttfb', "TTFB is {$ttfb}ms (should be under 800ms)", 'high');
         } elseif ($ttfb > 400) {
-            $this->createFinding($site, 'moderate_ttfb', "TTFB is {$ttfb}ms (could be faster)", 'medium');
+            $this->createFinding($site, 'ttfb', "TTFB is {$ttfb}ms (could be faster)", 'medium');
         } else {
             $this->createPassedFinding($site, 'ttfb', "TTFB is {$ttfb}ms — fast response time");
         }
@@ -109,7 +109,7 @@ class Scanner
         $results['is_https'] = str_starts_with($url, 'https://');
 
         if (!$results['is_https']) {
-            $this->createFinding($site, 'no_https', 'Site does not use HTTPS', 'high');
+            $this->createFinding($site, 'https', 'Site does not use HTTPS', 'high');
         } else {
             $this->createPassedFinding($site, 'https', 'Site uses HTTPS');
         }
@@ -121,9 +121,9 @@ class Scanner
         $results['indexable'] = $status === 200 && !$noindex;
 
         if ($status !== 200) {
-            $this->createFinding($site, 'not_indexable', "Homepage returned HTTP {$status} — search engines may not index it", 'high');
+            $this->createFinding($site, 'indexability', "Homepage returned HTTP {$status} — search engines may not index it", 'high');
         } elseif ($noindex) {
-            $this->createFinding($site, 'noindex_directive', 'Homepage has a noindex directive — search engines will not index it', 'high');
+            $this->createFinding($site, 'indexability', 'Homepage has a noindex directive — search engines will not index it', 'high');
         } else {
             $this->createPassedFinding($site, 'indexability', 'Homepage is indexable — HTTP 200 with no noindex directive');
         }
@@ -135,7 +135,7 @@ class Scanner
         $results['has_viewport'] = $hasViewport;
 
         if (!$hasViewport) {
-            $this->createFinding($site, 'missing_viewport', 'Page has no viewport meta tag — it may not render correctly on mobile devices', 'high');
+            $this->createFinding($site, 'viewport', 'Page has no viewport meta tag — it may not render correctly on mobile devices', 'high');
         } else {
             $this->createPassedFinding($site, 'viewport', 'Viewport meta tag is present');
         }
@@ -148,7 +148,7 @@ class Scanner
         $results['canonical'] = $canonical ?: null;
 
         if (empty($canonical)) {
-            $this->createFinding($site, 'missing_canonical', 'Page has no canonical URL — this can cause duplicate content issues', 'medium');
+            $this->createFinding($site, 'canonical', 'Page has no canonical URL — this can cause duplicate content issues', 'medium');
         } else {
             $this->createPassedFinding($site, 'canonical', 'Canonical URL is specified');
         }
@@ -160,7 +160,7 @@ class Scanner
         $results['has_lang'] = $hasLang;
 
         if (!$hasLang) {
-            $this->createFinding($site, 'missing_lang', 'Page does not declare a language attribute on the <html> tag', 'medium');
+            $this->createFinding($site, 'lang_attribute', 'Page does not declare a language attribute on the <html> tag', 'medium');
         } else {
             $this->createPassedFinding($site, 'lang_attribute', 'Language attribute is declared');
         }
@@ -173,7 +173,7 @@ class Scanner
         $results['has_charset'] = $hasCharset;
 
         if (!$hasCharset) {
-            $this->createFinding($site, 'missing_charset', 'Page does not declare character encoding — text may not render correctly', 'medium');
+            $this->createFinding($site, 'charset', 'Page does not declare character encoding — text may not render correctly', 'medium');
         } else {
             $this->createPassedFinding($site, 'charset', 'Character encoding is declared');
         }
@@ -185,7 +185,7 @@ class Scanner
         $results['has_analytics'] = $hasAnalytics;
 
         if (!$hasAnalytics) {
-            $this->createFinding($site, 'missing_analytics', 'No analytics tracking detected — you cannot measure traffic or SEO impact', 'medium');
+            $this->createFinding($site, 'analytics', 'No analytics tracking detected — you cannot measure traffic or SEO impact', 'medium');
         } else {
             $this->createPassedFinding($site, 'analytics', 'Analytics tracking is installed');
         }
@@ -197,7 +197,7 @@ class Scanner
         $results['has_gsc_verification'] = $hasGsc;
 
         if (!$hasGsc) {
-            $this->createFinding($site, 'missing_gsc', 'No Google Search Console verification tag found', 'low');
+            $this->createFinding($site, 'gsc_verification', 'No Google Search Console verification tag found', 'low');
         } else {
             $this->createPassedFinding($site, 'gsc_verification', 'Google Search Console verification tag found');
         }
@@ -209,7 +209,7 @@ class Scanner
         $results['has_structured_data'] = $hasJsonLd;
 
         if (!$hasJsonLd) {
-            $this->createFinding($site, 'missing_structured_data', 'No JSON-LD structured data found — your site misses out on rich search results', 'medium');
+            $this->createFinding($site, 'structured_data', 'No JSON-LD structured data found — your site misses out on rich search results', 'medium');
         } else {
             $this->createPassedFinding($site, 'structured_data', 'JSON-LD structured data found');
         }
@@ -227,7 +227,7 @@ class Scanner
         $results['has_xml_sitemap'] = $hasSitemap;
 
         if (!$hasSitemap) {
-            $this->createFinding($site, 'missing_sitemap', 'No XML sitemap found — search engines must rely on crawling links alone', 'medium');
+            $this->createFinding($site, 'xml_sitemap', 'No XML sitemap found — search engines must rely on crawling links alone', 'medium');
         } else {
             $this->createPassedFinding($site, 'xml_sitemap', 'XML sitemap found');
         }
@@ -245,7 +245,7 @@ class Scanner
         $results['has_robots_txt'] = $hasRobots;
 
         if (!$hasRobots) {
-            $this->createFinding($site, 'missing_robots_txt', 'No robots.txt file found — search engines have no crawl directives', 'low');
+            $this->createFinding($site, 'robots_txt', 'No robots.txt file found — search engines have no crawl directives', 'low');
         } else {
             $this->createPassedFinding($site, 'robots_txt', 'robots.txt file found');
         }
@@ -253,30 +253,27 @@ class Scanner
 
     private function createFinding(Site $site, string $slug, string $description, string $severity): void
     {
-        $existing = $site->findings()
-            ->where('check', $slug)
-            ->where('status', 'open')
-            ->first();
+        // Remove any previous passed finding for this check
+        $site->findings()->where('check', $slug)->where('status', 'passed')->delete();
 
-        if ($existing) {
-            return;
+        $finding = $site->findings()->updateOrCreate(
+            ['check' => $slug, 'status' => 'open'],
+            ['message' => $description, 'severity' => $severity],
+        );
+
+        if ($finding->tasks()->count() === 0) {
+            $finding->tasks()->create([
+                'description' => $this->taskTitleFor($slug),
+                'sort'        => 0,
+            ]);
         }
-
-        $finding = $site->findings()->create([
-            'check'    => $slug,
-            'message'  => $description,
-            'severity' => $severity,
-            'status'   => 'open',
-        ]);
-
-        $finding->tasks()->create([
-            'description' => $this->taskTitleFor($slug),
-            'sort'        => 0,
-        ]);
     }
 
     private function createPassedFinding(Site $site, string $slug, string $description): void
     {
+        // Remove any previous open finding for this check
+        $site->findings()->where('check', $slug)->where('status', 'open')->delete();
+
         $site->findings()->updateOrCreate(
             ['check' => $slug, 'status' => 'passed'],
             ['message' => $description, 'severity' => 'low'],
@@ -286,27 +283,22 @@ class Scanner
     private function taskTitleFor(string $slug): string
     {
         return match ($slug) {
-            'missing_title'          => 'Add a descriptive title tag',
-            'long_title'             => 'Shorten the title to under 60 characters',
-            'missing_meta_desc'      => 'Write a meta description',
-            'long_meta_desc'         => 'Shorten meta description to under 160 characters',
-            'missing_h1'             => 'Add an H1 heading to the page',
-            'multiple_h1'            => 'Reduce to a single H1 heading',
-            'slow_ttfb'              => 'Investigate server response time',
-            'moderate_ttfb'          => 'Consider optimising server response time',
-            'no_https'               => 'Enable HTTPS on the site',
-            'not_indexable'          => 'Ensure the homepage returns HTTP 200',
-            'noindex_directive'      => 'Remove the noindex directive from the homepage',
-            'missing_viewport'       => 'Add a viewport meta tag for mobile compatibility',
-            'missing_canonical'      => 'Add a canonical URL to avoid duplicate content issues',
-            'missing_lang'           => 'Add a lang attribute to the <html> tag',
-            'missing_charset'        => 'Declare character encoding with a charset meta tag',
-            'missing_analytics'      => 'Install analytics tracking (e.g. Google Analytics, Plausible)',
-            'missing_gsc'            => 'Add Google Search Console verification to your site',
-            'missing_structured_data'=> 'Add JSON-LD structured data for rich search results',
-            'missing_sitemap'        => 'Create and submit an XML sitemap',
-            'missing_robots_txt'     => 'Add a robots.txt file with crawl directives',
-            default                  => 'Review and fix: ' . $slug,
+            'title'           => 'Fix the title tag',
+            'meta_description'=> 'Fix the meta description',
+            'h1'              => 'Fix the H1 heading',
+            'ttfb'            => 'Investigate and optimise server response time',
+            'https'           => 'Enable HTTPS on the site',
+            'indexability'    => 'Ensure the homepage is indexable',
+            'viewport'        => 'Add a viewport meta tag for mobile compatibility',
+            'canonical'       => 'Add a canonical URL to avoid duplicate content issues',
+            'lang_attribute'  => 'Add a lang attribute to the <html> tag',
+            'charset'         => 'Declare character encoding with a charset meta tag',
+            'analytics'       => 'Install analytics tracking (e.g. Google Analytics, Plausible)',
+            'gsc_verification'=> 'Add Google Search Console verification to your site',
+            'structured_data' => 'Add JSON-LD structured data for rich search results',
+            'xml_sitemap'     => 'Create and submit an XML sitemap',
+            'robots_txt'      => 'Add a robots.txt file with crawl directives',
+            default           => 'Review and fix: ' . $slug,
         };
     }
 }
