@@ -1,0 +1,27 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('findings', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('site_id')->constrained()->cascadeOnDelete();
+            $table->string('check');           // e.g. 'missing_title', 'slow_ttfb'
+            $table->string('severity');        // high, medium, low
+            $table->string('status')->default('open'); // open, fixed, dismissed
+            $table->text('message');
+            $table->json('meta')->nullable();  // extra data (actual value, threshold, etc.)
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('findings');
+    }
+};
