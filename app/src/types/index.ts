@@ -117,3 +117,18 @@ export interface CompetitorComparisonData {
   competitors: CompetitorResult[]
 }
 
+export interface SerpResultEntry {
+  id: number
+  keyword: string
+  position: number | null
+  result_url: string | null
+  snippet: string | null
+  total_results: number | null
+  checked_at: string
+}
+
+export interface SerpHistoryData {
+  keyword: string | null
+  history: SerpResultEntry[]
+}
+

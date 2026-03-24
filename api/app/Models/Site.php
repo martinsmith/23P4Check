@@ -49,4 +49,9 @@ class Site extends Model
     {
         return $this->hasMany(ScanSnapshot::class);
     }
+
+    public function serpResults(): HasMany
+    {
+        return $this->hasMany(SerpResult::class);
+    }
 }

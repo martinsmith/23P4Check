@@ -5,6 +5,7 @@ use App\Http\Controllers\CompetitorScanController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\MissionController;
 use App\Http\Controllers\ScanController;
+use App\Http\Controllers\SerpController;
 use App\Http\Controllers\SiteController;
 use Illuminate\Support\Facades\Route;
 
@@ -32,4 +33,8 @@ Route::middleware('auth:sanctum')->group(function () {
     // Competitor scanning
     Route::post('/sites/{site}/competitors/scan', [CompetitorScanController::class, 'scan']);
     Route::get('/sites/{site}/competitors/results', [CompetitorScanController::class, 'results']);
+
+    // SERP tracking
+    Route::post('/sites/{site}/serp/check', [SerpController::class, 'check']);
+    Route::get('/sites/{site}/serp/history', [SerpController::class, 'history']);
 });

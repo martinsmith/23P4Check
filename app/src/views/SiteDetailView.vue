@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
 import { useAuth } from '../composables/useAuth'
-import type { Site, Mission, DashboardData, CompetitorComparisonData } from '../types'
+import type { Site, Mission, DashboardData, CompetitorComparisonData, SerpHistoryData, SerpResultEntry } from '../types'
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()
@@ -16,7 +16,7 @@ const scanning = ref(false)
 const saving = ref(false)
 const error = ref('')
 const activeTab = ref<'progress' | 'health' | 'growth'>('progress')
-const healthSubTab = ref<'checks' | 'competitors'>('checks')
+const healthSubTab = ref<'checks' | 'competitors' | 'rankings'>('checks')
 
 const missions = ref<Mission[]>([])
 const generatingMissions = ref(false)
@@ -231,10 +231,46 @@ async function triggerCompetitorScan() {
 
 const allCheckSlugs = Object.keys(checkMeta)
 
+// SERP Rankings
+const serpData = ref<SerpHistoryData | null>(null)
+const checkingSerp = ref(false)
+
+async function loadSerpHistory() {
+  try {
+    serpData.value = await api.get<SerpHistoryData>(`/sites/${props.id}/serp/history`)
+  } catch {}
+}
+
+async function triggerSerpCheck() {
+  checkingSerp.value = true
+  error.value = ''
+  try {
+    await api.post<{ result: SerpResultEntry }>(`/sites/${props.id}/serp/check`)
+    await loadSerpHistory()
+  } catch (e: any) {
+    error.value = e.message
+  } finally {
+    checkingSerp.value = false
+  }
+}
+
+function positionLabel(pos: number | null): string {
+  if (pos === null) return 'Not found'
+  return `#${pos}`
+}
+
+function positionClass(pos: number | null): string {
+  if (pos === null) return 'pos-none'
+  if (pos <= 3) return 'pos-top3'
+  if (pos <= 10) return 'pos-page1'
+  if (pos <= 30) return 'pos-page2-3'
+  return 'pos-deep'
+}
+
 onMounted(async () => {
   await loadSite()
   if (site.value) {
-    await Promise.all([loadMissions(), loadDashboard(), loadCompetitorResults()])
+    await Promise.all([loadMissions(), loadDashboard(), loadCompetitorResults(), loadSerpHistory()])
   }
 })
 </script>
@@ -357,9 +393,10 @@ onMounted(async () => {
       <!-- ===== TAB: Website Visibility ===== -->
       <div v-if="activeTab === 'health'">
         <!-- Sub-tabs -->
-        <nav class="sub-tabs" v-if="site?.competitors?.length">
+        <nav class="sub-tabs">
           <button class="sub-tab" :class="{ active: healthSubTab === 'checks' }" @click="healthSubTab = 'checks'">Your Checks</button>
-          <button class="sub-tab" :class="{ active: healthSubTab === 'competitors' }" @click="healthSubTab = 'competitors'">Competitors</button>
+          <button v-if="site?.competitors?.length" class="sub-tab" :class="{ active: healthSubTab === 'competitors' }" @click="healthSubTab = 'competitors'">Competitors</button>
+          <button v-if="hasBusinessContext" class="sub-tab" :class="{ active: healthSubTab === 'rankings' }" @click="healthSubTab = 'rankings'">Rankings</button>
         </nav>
 
         <!-- Sub-tab: Your Checks -->
@@ -466,6 +503,97 @@ onMounted(async () => {
 
           <div v-else class="empty">
             <p>Click "Scan Competitors" to run the 16 visibility checks against your competitors.</p>
+          </div>
+        </div>
+
+        <!-- Sub-tab: Rankings -->
+        <div v-if="healthSubTab === 'rankings'" class="rankings-tab">
+          <div class="rankings-header">
+            <div>
+              <p class="rankings-keyword" v-if="serpData?.keyword">
+                Tracking: <strong>"{{ serpData.keyword }}"</strong>
+              </p>
+              <p class="rankings-intro">See where your site appears in Google search results for your primary keyword.</p>
+            </div>
+            <button class="btn-primary" @click="triggerSerpCheck" :disabled="checkingSerp">
+              <span v-if="checkingSerp" class="spinner" /> {{ checkingSerp ? 'Checking…' : 'Check Ranking' }}
+            </button>
+          </div>
+
+          <!-- Current position hero -->
+          <div v-if="serpData?.history?.length" class="serp-current">
+            <div class="serp-position-card" :class="positionClass(serpData.history[0].position)">
+              <span class="serp-pos-label">Current Position</span>
+              <span class="serp-pos-value">{{ positionLabel(serpData.history[0].position) }}</span>
+              <span class="serp-pos-date">{{ new Date(serpData.history[0].checked_at).toLocaleDateString() }}</span>
+            </div>
+            <div v-if="serpData.history[0].snippet" class="serp-snippet-card">
+              <span class="serp-snippet-label">Google Snippet</span>
+              <p class="serp-snippet-text">{{ serpData.history[0].snippet }}</p>
+              <a v-if="serpData.history[0].result_url" :href="serpData.history[0].result_url" target="_blank" class="serp-snippet-url">
+                {{ serpData.history[0].result_url }}
+              </a>
+            </div>
+          </div>
+
+          <!-- History chart -->
+          <div v-if="serpData && serpData.history.length > 1" class="serp-history-section">
+            <h3 class="section-title">Ranking History</h3>
+            <div class="serp-chart">
+              <div class="serp-chart-y-axis">
+                <span>#1</span>
+                <span>#25</span>
+                <span>#50</span>
+                <span>#75</span>
+                <span>#100</span>
+              </div>
+              <div class="serp-chart-bars">
+                <div v-for="(r, i) in [...serpData.history].reverse()" :key="i" class="serp-bar-group">
+                  <div class="serp-bar-wrap">
+                    <div
+                      v-if="r.position !== null"
+                      class="serp-bar"
+                      :class="positionClass(r.position)"
+                      :style="{ height: Math.max(4, (r.position / 100) * 100) + '%' }"
+                      :title="`#${r.position} on ${new Date(r.checked_at).toLocaleDateString()}`"
+                    ></div>
+                    <div v-else class="serp-bar-none" title="Not found in top 100">—</div>
+                  </div>
+                  <span class="serp-bar-label">{{ new Date(r.checked_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="serp-legend">
+              <span class="legend-item"><span class="legend-dot serp-top3"></span> Top 3</span>
+              <span class="legend-item"><span class="legend-dot serp-page1"></span> Page 1</span>
+              <span class="legend-item"><span class="legend-dot serp-page2-3"></span> Page 2-3</span>
+              <span class="legend-item"><span class="legend-dot serp-deep"></span> 30+</span>
+            </div>
+          </div>
+
+          <!-- History table -->
+          <div v-if="serpData && serpData.history.length" class="serp-table-section">
+            <h3 class="section-title">Check Log</h3>
+            <table class="serp-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Position</th>
+                  <th>URL</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="r in serpData.history" :key="r.id">
+                  <td>{{ new Date(r.checked_at).toLocaleDateString() }}</td>
+                  <td><span class="serp-pos-badge" :class="positionClass(r.position)">{{ positionLabel(r.position) }}</span></td>
+                  <td class="serp-url-cell">{{ r.result_url || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div v-if="!serpData?.history?.length" class="empty">
+            <p>Click "Check Ranking" to see where your site appears for "{{ serpData?.keyword || 'your keyword' }}" in Google.</p>
           </div>
         </div>
       </div>
@@ -963,6 +1091,97 @@ main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
 .comp-cell.you { background: oklch(0.96 0.02 150); }
 .comp-totals td { font-weight: 700; border-top: 2px solid var(--border); }
 .comp-totals .comp-cell.you { background: oklch(0.96 0.02 150); }
+
+/* Rankings / SERP tab */
+.rankings-tab { padding-top: 0.5rem; }
+.rankings-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 1.5rem; gap: 1rem; flex-wrap: wrap;
+}
+.rankings-keyword { font-size: 0.9375rem; color: var(--text-primary); margin: 0 0 0.25rem; }
+.rankings-intro { font-size: 0.8125rem; color: var(--text-secondary); margin: 0; }
+
+.serp-current {
+  display: grid; grid-template-columns: auto 1fr; gap: 1rem; margin-bottom: 2rem;
+}
+.serp-position-card {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 1.5rem 2rem; border-radius: 12px; background: var(--surface-1);
+  border: 1px solid var(--border); min-width: 140px;
+}
+.serp-pos-label { font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); }
+.serp-pos-value { font-size: 2rem; font-weight: 800; margin: 0.25rem 0; }
+.serp-pos-date { font-size: 0.75rem; color: var(--text-tertiary); }
+
+.serp-position-card.pos-top3 .serp-pos-value { color: oklch(0.5 0.2 150); }
+.serp-position-card.pos-page1 .serp-pos-value { color: oklch(0.5 0.15 200); }
+.serp-position-card.pos-page2-3 .serp-pos-value { color: oklch(0.55 0.12 60); }
+.serp-position-card.pos-deep .serp-pos-value { color: oklch(0.55 0.12 25); }
+.serp-position-card.pos-none .serp-pos-value { color: var(--text-tertiary); font-size: 1.25rem; }
+
+.serp-snippet-card {
+  padding: 1.25rem; border-radius: 12px; background: var(--surface-1);
+  border: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.5rem;
+}
+.serp-snippet-label { font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); }
+.serp-snippet-text { font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.5; margin: 0; }
+.serp-snippet-url { font-size: 0.75rem; color: var(--accent); word-break: break-all; }
+
+/* SERP chart */
+.serp-history-section { margin-bottom: 2rem; }
+.serp-chart { display: flex; gap: 0.5rem; }
+.serp-chart-y-axis {
+  display: flex; flex-direction: column; justify-content: space-between;
+  font-size: 0.625rem; color: var(--text-tertiary); padding-bottom: 1.5rem; min-width: 2rem; text-align: right;
+}
+.serp-chart-bars {
+  flex: 1; display: flex; gap: 0.25rem; align-items: flex-start;
+  height: 160px; padding-bottom: 1.5rem; border-left: 1px solid var(--border);
+}
+.serp-bar-group { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; }
+.serp-bar-wrap {
+  flex: 1; width: 100%; max-width: 28px; display: flex; flex-direction: column;
+  justify-content: flex-start; align-items: center;
+}
+.serp-bar {
+  width: 100%; border-radius: 0 0 4px 4px; min-height: 4px;
+}
+.serp-bar.pos-top3 { background: oklch(0.55 0.18 150); }
+.serp-bar.pos-page1 { background: oklch(0.55 0.15 200); }
+.serp-bar.pos-page2-3 { background: oklch(0.6 0.12 60); }
+.serp-bar.pos-deep { background: oklch(0.6 0.12 25); }
+.serp-bar-none { font-size: 0.75rem; color: var(--text-tertiary); }
+.serp-bar-label {
+  font-size: 0.5625rem; color: var(--text-tertiary); margin-top: 0.25rem; white-space: nowrap;
+}
+.serp-legend {
+  display: flex; gap: 1rem; justify-content: center; margin-top: 0.75rem;
+}
+.legend-dot.serp-top3 { background: oklch(0.55 0.18 150); }
+.legend-dot.serp-page1 { background: oklch(0.55 0.15 200); }
+.legend-dot.serp-page2-3 { background: oklch(0.6 0.12 60); }
+.legend-dot.serp-deep { background: oklch(0.6 0.12 25); }
+
+/* SERP table */
+.serp-table-section { margin-bottom: 2rem; }
+.serp-table {
+  width: 100%; border-collapse: collapse; font-size: 0.8125rem;
+}
+.serp-table th, .serp-table td {
+  padding: 0.5rem 0.75rem; text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.serp-table th { font-weight: 600; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.serp-url-cell { font-size: 0.75rem; color: var(--text-tertiary); word-break: break-all; max-width: 400px; }
+.serp-pos-badge {
+  display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px;
+  font-size: 0.75rem; font-weight: 700;
+}
+.serp-pos-badge.pos-top3 { background: oklch(0.92 0.06 150); color: oklch(0.4 0.15 150); }
+.serp-pos-badge.pos-page1 { background: oklch(0.92 0.05 200); color: oklch(0.4 0.12 200); }
+.serp-pos-badge.pos-page2-3 { background: oklch(0.92 0.05 60); color: oklch(0.45 0.1 60); }
+.serp-pos-badge.pos-deep { background: oklch(0.92 0.05 25); color: oklch(0.45 0.12 25); }
+.serp-pos-badge.pos-none { background: var(--surface-1); color: var(--text-tertiary); }
 
 /* Dark mode overrides */
 @media (prefers-color-scheme: dark) {

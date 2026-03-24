@@ -690,4 +690,115 @@ class ApiTest extends TestCase
         $response->assertStatus(422);
         $response->assertJsonPath('error', 'No competitors configured');
     }
+
+    // --- SERP Tracking ---
+
+    public function test_serp_check_returns_ranking_result(): void
+    {
+        config(['services.serper.api_key' => 'test-key']);
+
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+            'url' => 'https://example-plumber.co.uk',
+            'business_type' => 'Plumber',
+            'location' => 'Leeds',
+        ]);
+
+        Http::fake([
+            'google.serper.dev/search' => Http::response([
+                'organic' => [
+                    ['position' => 1, 'link' => 'https://competitor1.com', 'snippet' => 'Best plumber', 'title' => 'Comp 1'],
+                    ['position' => 2, 'link' => 'https://example-plumber.co.uk/services', 'snippet' => 'We are plumbers in Leeds', 'title' => 'Example'],
+                    ['position' => 3, 'link' => 'https://competitor2.com', 'snippet' => 'Another plumber', 'title' => 'Comp 2'],
+                ],
+            ], 200),
+        ]);
+
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/serp/check");
+
+        $response->assertOk();
+        $response->assertJsonPath('result.keyword', 'Plumber in Leeds');
+        $response->assertJsonPath('result.position', 2);
+        $this->assertNotNull($response->json('result.snippet'));
+
+        $this->assertDatabaseHas('serp_results', [
+            'site_id' => $site->id,
+            'keyword' => 'Plumber in Leeds',
+            'position' => 2,
+        ]);
+    }
+
+    public function test_serp_check_records_null_when_not_found(): void
+    {
+        config(['services.serper.api_key' => 'test-key']);
+
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+            'url' => 'https://example-plumber.co.uk',
+            'business_type' => 'Plumber',
+            'location' => 'Leeds',
+        ]);
+
+        Http::fake([
+            'google.serper.dev/search' => Http::response([
+                'organic' => [
+                    ['position' => 1, 'link' => 'https://competitor1.com', 'snippet' => 'Best', 'title' => 'Comp'],
+                ],
+            ], 200),
+        ]);
+
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/serp/check");
+
+        $response->assertOk();
+        $response->assertJsonPath('result.position', null);
+    }
+
+    public function test_serp_check_requires_business_context(): void
+    {
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+            'url' => 'https://example.com',
+        ]);
+
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/serp/check");
+
+        $response->assertStatus(422);
+    }
+
+    public function test_serp_history_returns_results(): void
+    {
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+            'url' => 'https://example.com',
+            'business_type' => 'Plumber',
+            'location' => 'Leeds',
+        ]);
+
+        $site->serpResults()->create([
+            'keyword' => 'Plumber in Leeds',
+            'position' => 5,
+            'result_url' => 'https://example.com',
+            'snippet' => 'Test snippet',
+            'total_results' => 100,
+        ]);
+
+        $response = $this->actingAs($this->user)
+            ->getJson("/api/sites/{$site->id}/serp/history");
+
+        $response->assertOk();
+        $response->assertJsonPath('keyword', 'Plumber in Leeds');
+        $response->assertJsonCount(1, 'history');
+        $response->assertJsonPath('history.0.position', 5);
+    }
+
+    public function test_serp_endpoints_require_auth(): void
+    {
+        $site = Site::factory()->create(['user_id' => $this->user->id]);
+
+        $this->postJson("/api/sites/{$site->id}/serp/check")->assertUnauthorized();
+        $this->getJson("/api/sites/{$site->id}/serp/history")->assertUnauthorized();
+    }
 }
