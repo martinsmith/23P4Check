@@ -136,8 +136,21 @@ class ApiTest extends TestCase
 
     public function test_can_scan_site(): void
     {
+        $html = '<html lang="en"><head>'
+            . '<meta charset="utf-8">'
+            . '<title>Test</title>'
+            . '<meta name="description" content="A test page">'
+            . '<meta name="viewport" content="width=device-width">'
+            . '<link rel="canonical" href="https://example.com">'
+            . '<meta name="google-site-verification" content="abc123">'
+            . '<script type="application/ld+json">{"@type":"Organization"}</script>'
+            . '<script src="https://www.googletagmanager.com/gtag/js"></script>'
+            . '</head><body><h1>Hello</h1></body></html>';
+
         Http::fake([
-            'https://example.com' => Http::response('<html><head><title>Test</title><meta name="description" content="A test page"></head><body><h1>Hello</h1></body></html>', 200),
+            'https://example.com' => Http::response($html, 200),
+            'https://example.com/sitemap.xml' => Http::response('<?xml version="1.0"?><urlset></urlset>', 200),
+            'https://example.com/robots.txt' => Http::response("User-agent: *\nAllow: /", 200),
         ]);
 
         $site = Site::factory()->create([

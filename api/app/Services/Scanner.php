@@ -31,6 +31,16 @@ class Scanner
         $this->checkH1($site, $html, $results);
         $this->checkTtfb($site, $ttfb, $results);
         $this->checkHttps($site, $url, $results);
+        $this->checkIndexability($site, $html, $status, $results);
+        $this->checkViewport($site, $html, $results);
+        $this->checkCanonical($site, $html, $results);
+        $this->checkLanguageAttribute($site, $html, $results);
+        $this->checkCharacterEncoding($site, $html, $results);
+        $this->checkAnalytics($site, $html, $results);
+        $this->checkGoogleSearchConsole($site, $html, $results);
+        $this->checkStructuredData($site, $html, $results);
+        $this->checkXmlSitemap($site, $url, $results);
+        $this->checkRobotsTxt($site, $url, $results);
 
         $site->update(['last_scanned_at' => now()]);
 
@@ -95,6 +105,122 @@ class Scanner
         }
     }
 
+    private function checkIndexability(Site $site, string $html, int $status, array &$results): void
+    {
+        $noindex = (bool) preg_match('/<meta[^>]+name=["\']robots["\'][^>]+content=["\'][^"\']*noindex/is', $html);
+        $results['indexable'] = $status === 200 && !$noindex;
+
+        if ($status !== 200) {
+            $this->createFinding($site, 'not_indexable', "Homepage returned HTTP {$status} — search engines may not index it", 'high');
+        } elseif ($noindex) {
+            $this->createFinding($site, 'noindex_directive', 'Homepage has a noindex directive — search engines will not index it', 'high');
+        }
+    }
+
+    private function checkViewport(Site $site, string $html, array &$results): void
+    {
+        $hasViewport = (bool) preg_match('/<meta[^>]+name=["\']viewport["\']/is', $html);
+        $results['has_viewport'] = $hasViewport;
+
+        if (!$hasViewport) {
+            $this->createFinding($site, 'missing_viewport', 'Page has no viewport meta tag — it may not render correctly on mobile devices', 'high');
+        }
+    }
+
+    private function checkCanonical(Site $site, string $html, array &$results): void
+    {
+        preg_match('/<link[^>]+rel=["\']canonical["\'][^>]+href=["\'](.*?)["\']/is', $html, $m);
+        $canonical = trim($m[1] ?? '');
+        $results['canonical'] = $canonical ?: null;
+
+        if (empty($canonical)) {
+            $this->createFinding($site, 'missing_canonical', 'Page has no canonical URL — this can cause duplicate content issues', 'medium');
+        }
+    }
+
+    private function checkLanguageAttribute(Site $site, string $html, array &$results): void
+    {
+        $hasLang = (bool) preg_match('/<html[^>]+lang=["\']([^"\']+)["\']/is', $html);
+        $results['has_lang'] = $hasLang;
+
+        if (!$hasLang) {
+            $this->createFinding($site, 'missing_lang', 'Page does not declare a language attribute on the <html> tag', 'medium');
+        }
+    }
+
+    private function checkCharacterEncoding(Site $site, string $html, array &$results): void
+    {
+        $hasCharset = (bool) preg_match('/<meta[^>]+charset=["\'"]?[^"\'>]+/is', $html)
+            || (bool) preg_match('/<meta[^>]+http-equiv=["\']Content-Type["\']/is', $html);
+        $results['has_charset'] = $hasCharset;
+
+        if (!$hasCharset) {
+            $this->createFinding($site, 'missing_charset', 'Page does not declare character encoding — text may not render correctly', 'medium');
+        }
+    }
+
+    private function checkAnalytics(Site $site, string $html, array &$results): void
+    {
+        $hasAnalytics = (bool) preg_match('/google-analytics\.com|googletagmanager\.com|gtag\(|analytics\.js|ga\.js|plausible\.io|umami/is', $html);
+        $results['has_analytics'] = $hasAnalytics;
+
+        if (!$hasAnalytics) {
+            $this->createFinding($site, 'missing_analytics', 'No analytics tracking detected — you cannot measure traffic or SEO impact', 'medium');
+        }
+    }
+
+    private function checkGoogleSearchConsole(Site $site, string $html, array &$results): void
+    {
+        $hasGsc = (bool) preg_match('/<meta[^>]+name=["\']google-site-verification["\']/is', $html);
+        $results['has_gsc_verification'] = $hasGsc;
+
+        if (!$hasGsc) {
+            $this->createFinding($site, 'missing_gsc', 'No Google Search Console verification tag found', 'low');
+        }
+    }
+
+    private function checkStructuredData(Site $site, string $html, array &$results): void
+    {
+        $hasJsonLd = (bool) preg_match('/<script[^>]+type=["\']application\/ld\+json["\']/is', $html);
+        $results['has_structured_data'] = $hasJsonLd;
+
+        if (!$hasJsonLd) {
+            $this->createFinding($site, 'missing_structured_data', 'No JSON-LD structured data found — your site misses out on rich search results', 'medium');
+        }
+    }
+
+    private function checkXmlSitemap(Site $site, string $url, array &$results): void
+    {
+        try {
+            $response = Http::timeout(10)->get($url . '/sitemap.xml');
+            $hasSitemap = $response->ok() && str_contains($response->body(), '<urlset');
+        } catch (\Exception $e) {
+            $hasSitemap = false;
+        }
+
+        $results['has_xml_sitemap'] = $hasSitemap;
+
+        if (!$hasSitemap) {
+            $this->createFinding($site, 'missing_sitemap', 'No XML sitemap found — search engines must rely on crawling links alone', 'medium');
+        }
+    }
+
+    private function checkRobotsTxt(Site $site, string $url, array &$results): void
+    {
+        try {
+            $response = Http::timeout(10)->get($url . '/robots.txt');
+            $hasRobots = $response->ok() && strlen(trim($response->body())) > 0;
+        } catch (\Exception $e) {
+            $hasRobots = false;
+        }
+
+        $results['has_robots_txt'] = $hasRobots;
+
+        if (!$hasRobots) {
+            $this->createFinding($site, 'missing_robots_txt', 'No robots.txt file found — search engines have no crawl directives', 'low');
+        }
+    }
+
     private function createFinding(Site $site, string $slug, string $description, string $severity): void
     {
         $existing = $site->findings()
@@ -122,16 +248,27 @@ class Scanner
     private function taskTitleFor(string $slug): string
     {
         return match ($slug) {
-            'missing_title'    => 'Add a descriptive title tag',
-            'long_title'       => 'Shorten the title to under 60 characters',
-            'missing_meta_desc'=> 'Write a meta description',
-            'long_meta_desc'   => 'Shorten meta description to under 160 characters',
-            'missing_h1'       => 'Add an H1 heading to the page',
-            'multiple_h1'      => 'Reduce to a single H1 heading',
-            'slow_ttfb'        => 'Investigate server response time',
-            'moderate_ttfb'    => 'Consider optimising server response time',
-            'no_https'         => 'Enable HTTPS on the site',
-            default            => 'Review and fix: ' . $slug,
+            'missing_title'          => 'Add a descriptive title tag',
+            'long_title'             => 'Shorten the title to under 60 characters',
+            'missing_meta_desc'      => 'Write a meta description',
+            'long_meta_desc'         => 'Shorten meta description to under 160 characters',
+            'missing_h1'             => 'Add an H1 heading to the page',
+            'multiple_h1'            => 'Reduce to a single H1 heading',
+            'slow_ttfb'              => 'Investigate server response time',
+            'moderate_ttfb'          => 'Consider optimising server response time',
+            'no_https'               => 'Enable HTTPS on the site',
+            'not_indexable'          => 'Ensure the homepage returns HTTP 200',
+            'noindex_directive'      => 'Remove the noindex directive from the homepage',
+            'missing_viewport'       => 'Add a viewport meta tag for mobile compatibility',
+            'missing_canonical'      => 'Add a canonical URL to avoid duplicate content issues',
+            'missing_lang'           => 'Add a lang attribute to the <html> tag',
+            'missing_charset'        => 'Declare character encoding with a charset meta tag',
+            'missing_analytics'      => 'Install analytics tracking (e.g. Google Analytics, Plausible)',
+            'missing_gsc'            => 'Add Google Search Console verification to your site',
+            'missing_structured_data'=> 'Add JSON-LD structured data for rich search results',
+            'missing_sitemap'        => 'Create and submit an XML sitemap',
+            'missing_robots_txt'     => 'Add a robots.txt file with crawl directives',
+            default                  => 'Review and fix: ' . $slug,
         };
     }
 }
