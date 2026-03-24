@@ -13,7 +13,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
     Route::post('/logout', [AuthController::class, 'logout']);
 
-    Route::apiResource('sites', SiteController::class)->only(['index', 'store', 'show', 'destroy']);
+    Route::apiResource('sites', SiteController::class)->only(['index', 'store', 'show', 'update', 'destroy']);
 
     Route::post('/sites/{site}/scan', [ScanController::class, 'store']);
     Route::post('/sites/{site}/findings/{finding}/complete', [ScanController::class, 'completeFinding']);

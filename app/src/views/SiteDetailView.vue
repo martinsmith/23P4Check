@@ -13,7 +13,57 @@ const { user, logout } = useAuth()
 const site = ref<Site | null>(null)
 const loading = ref(true)
 const scanning = ref(false)
+const saving = ref(false)
 const error = ref('')
+const activeTab = ref<'health' | 'growth'>('health')
+
+// Business context form
+const bizForm = ref({ business_type: '', location: '', service_area: '' })
+const competitorInputs = ref<string[]>([''])
+
+function initBizForm() {
+  if (!site.value) return
+  bizForm.value = {
+    business_type: site.value.business_type || '',
+    location: site.value.location || '',
+    service_area: site.value.service_area || '',
+  }
+  const domains = (site.value.competitors || []).map(c => c.domain)
+  competitorInputs.value = domains.length ? domains : ['']
+}
+
+const hasBusinessContext = computed(() =>
+  site.value?.business_type || site.value?.location
+)
+
+function addCompetitor() {
+  if (competitorInputs.value.length < 5) {
+    competitorInputs.value.push('')
+  }
+}
+
+function removeCompetitor(i: number) {
+  competitorInputs.value.splice(i, 1)
+  if (competitorInputs.value.length === 0) competitorInputs.value.push('')
+}
+
+async function saveBusinessContext() {
+  saving.value = true
+  error.value = ''
+  try {
+    const competitors = competitorInputs.value.map(d => d.trim()).filter(Boolean)
+    const data = await api.put<{ site: Site }>(`/sites/${props.id}`, {
+      ...bizForm.value,
+      competitors,
+    })
+    site.value = { ...site.value!, ...data.site }
+    initBizForm()
+  } catch (e: any) {
+    error.value = e.message
+  } finally {
+    saving.value = false
+  }
+}
 
 async function loadSite() {
   loading.value = true
@@ -21,6 +71,7 @@ async function loadSite() {
   try {
     const data = await api.get<{ site: Site }>(`/sites/${props.id}`)
     site.value = data.site
+    initBizForm()
   } catch (e: any) {
     error.value = e.message
   } finally {
@@ -125,7 +176,7 @@ onMounted(loadSite)
           </p>
         </div>
         <div class="actions">
-          <button class="btn-primary" @click="triggerScan" :disabled="scanning">
+          <button class="btn-primary" @click="triggerScan" :disabled="scanning" v-if="activeTab === 'health'">
             <span v-if="scanning" class="spinner" /> {{ scanning ? 'Scanning…' : 'Run scan' }}
           </button>
           <button class="btn-danger-ghost" @click="deleteSite">Delete</button>
@@ -133,60 +184,125 @@ onMounted(loadSite)
       </div>
       <p v-if="error" class="error">{{ error }}</p>
 
-      <!-- Summary bar -->
-      <div v-if="site.findings?.length" class="summary-bar">
-        <div class="summary-stat" :class="{ 'has-issues': failedFindings.length }">
-          <span class="summary-number">{{ failedFindings.length }}</span>
-          <span class="summary-label">{{ failedFindings.length === 1 ? 'Issue' : 'Issues' }}</span>
+      <!-- Tabs -->
+      <nav class="tabs">
+        <button class="tab" :class="{ active: activeTab === 'health' }" @click="activeTab = 'health'">
+          Website Health
+        </button>
+        <button class="tab" :class="{ active: activeTab === 'growth' }" @click="activeTab = 'growth'">
+          Growth Plan
+          <span v-if="!hasBusinessContext" class="tab-badge">Setup</span>
+        </button>
+      </nav>
+
+      <!-- ===== TAB: Website Health ===== -->
+      <div v-if="activeTab === 'health'">
+        <!-- Summary bar -->
+        <div v-if="site.findings?.length" class="summary-bar">
+          <div class="summary-stat" :class="{ 'has-issues': failedFindings.length }">
+            <span class="summary-number">{{ failedFindings.length }}</span>
+            <span class="summary-label">{{ failedFindings.length === 1 ? 'Issue' : 'Issues' }}</span>
+          </div>
+          <div class="summary-stat passed">
+            <span class="summary-number">{{ passedFindings.length }}</span>
+            <span class="summary-label">Passed</span>
+          </div>
+          <div class="summary-stat">
+            <span class="summary-number">{{ (site.findings ?? []).length }}</span>
+            <span class="summary-label">Total Checks</span>
+          </div>
         </div>
-        <div class="summary-stat passed">
-          <span class="summary-number">{{ passedFindings.length }}</span>
-          <span class="summary-label">Passed</span>
-        </div>
-        <div class="summary-stat">
-          <span class="summary-number">{{ (site.findings ?? []).length }}</span>
-          <span class="summary-label">Total Checks</span>
-        </div>
+
+        <!-- Issues -->
+        <section v-if="failedFindings.length" class="findings-section">
+          <h3 class="section-title">Issues to Fix</h3>
+          <div class="card-grid">
+            <div v-for="f in failedFindings" :key="f.id" class="check-card issue">
+              <div class="card-top">
+                <span class="category-badge">{{ checkCategory(f.check) }}</span>
+                <span class="status-pill severity" :class="f.severity">{{ f.severity }}</span>
+              </div>
+              <h4 class="card-title">{{ checkLabel(f.check) }}</h4>
+              <p class="card-desc">{{ f.message }}</p>
+              <div v-if="f.tasks.length" class="card-tasks">
+                <div v-for="t in f.tasks" :key="t.id" class="task-item" :class="{ done: t.completed }">
+                  <span class="task-icon">{{ t.completed ? '✓' : '○' }}</span>
+                  <span>{{ t.description }}</span>
+                </div>
+              </div>
+              <button v-if="f.status === 'open'" class="btn-fix" @click="completeFinding(f.id)">Mark fixed</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Passed -->
+        <section v-if="passedFindings.length" class="findings-section">
+          <h3 class="section-title section-title-passed">Passed Checks</h3>
+          <div class="card-grid">
+            <div v-for="f in passedFindings" :key="f.id" class="check-card pass">
+              <div class="card-top">
+                <span class="category-badge">{{ checkCategory(f.check) }}</span>
+                <span class="status-pill passed">✓ Passed</span>
+              </div>
+              <h4 class="card-title">{{ checkLabel(f.check) }}</h4>
+              <p class="card-desc">{{ f.message }}</p>
+            </div>
+          </div>
+        </section>
+
+        <p v-if="!site.findings?.length" class="empty">No findings yet. Run a scan to check this site.</p>
       </div>
 
-      <!-- Issues -->
-      <section v-if="failedFindings.length" class="findings-section">
-        <h3 class="section-title">Issues to Fix</h3>
-        <div class="card-grid">
-          <div v-for="f in failedFindings" :key="f.id" class="check-card issue">
-            <div class="card-top">
-              <span class="category-badge">{{ checkCategory(f.check) }}</span>
-              <span class="status-pill severity" :class="f.severity">{{ f.severity }}</span>
+      <!-- ===== TAB: Growth Plan ===== -->
+      <div v-if="activeTab === 'growth'" class="growth-tab">
+        <div class="growth-intro">
+          <h3>Tell us about your business</h3>
+          <p>This information helps us generate targeted growth missions and track the keywords that matter to you.</p>
+        </div>
+
+        <form class="biz-form" @submit.prevent="saveBusinessContext">
+          <div class="form-group">
+            <label for="business_type">Business Type</label>
+            <input id="business_type" v-model="bizForm.business_type" type="text" placeholder="e.g. Plumber, Accountant, Restaurant" />
+          </div>
+          <div class="form-group">
+            <label for="location">Location</label>
+            <input id="location" v-model="bizForm.location" type="text" placeholder="e.g. Manchester, UK" />
+          </div>
+          <div class="form-group">
+            <label for="service_area">Service Area</label>
+            <input id="service_area" v-model="bizForm.service_area" type="text" placeholder="e.g. Greater Manchester, North West England" />
+          </div>
+
+          <div class="form-group">
+            <label>Competitors <span class="hint">(up to 5 domains)</span></label>
+            <div v-for="(_, i) in competitorInputs" :key="i" class="competitor-row">
+              <input v-model="competitorInputs[i]" type="text" placeholder="e.g. competitor.com" />
+              <button type="button" class="btn-icon" @click="removeCompetitor(i)" title="Remove">✕</button>
             </div>
-            <h4 class="card-title">{{ checkLabel(f.check) }}</h4>
-            <p class="card-desc">{{ f.message }}</p>
-            <div v-if="f.tasks.length" class="card-tasks">
-              <div v-for="t in f.tasks" :key="t.id" class="task-item" :class="{ done: t.completed }">
-                <span class="task-icon">{{ t.completed ? '✓' : '○' }}</span>
-                <span>{{ t.description }}</span>
-              </div>
+            <button v-if="competitorInputs.length < 5" type="button" class="btn-add-competitor" @click="addCompetitor">+ Add competitor</button>
+          </div>
+
+          <button type="submit" class="btn-primary" :disabled="saving">
+            <span v-if="saving" class="spinner" /> {{ saving ? 'Saving…' : (hasBusinessContext ? 'Update' : 'Save & Unlock Growth Plan') }}
+          </button>
+        </form>
+
+        <!-- Placeholder for future missions content when context is set -->
+        <div v-if="hasBusinessContext" class="growth-status">
+          <div class="status-card">
+            <span class="status-icon">✓</span>
+            <div>
+              <h4>Business context saved</h4>
+              <p>{{ site.business_type }} · {{ site.location }}</p>
             </div>
-            <button v-if="f.status === 'open'" class="btn-fix" @click="completeFinding(f.id)">Mark fixed</button>
+          </div>
+          <div class="coming-soon">
+            <h4>Missions &amp; SERP Tracking</h4>
+            <p>Growth missions and keyword tracking will appear here once enabled. Your business context is ready.</p>
           </div>
         </div>
-      </section>
-
-      <!-- Passed -->
-      <section v-if="passedFindings.length" class="findings-section">
-        <h3 class="section-title section-title-passed">Passed Checks</h3>
-        <div class="card-grid">
-          <div v-for="f in passedFindings" :key="f.id" class="check-card pass">
-            <div class="card-top">
-              <span class="category-badge">{{ checkCategory(f.check) }}</span>
-              <span class="status-pill passed">✓ Passed</span>
-            </div>
-            <h4 class="card-title">{{ checkLabel(f.check) }}</h4>
-            <p class="card-desc">{{ f.message }}</p>
-          </div>
-        </div>
-      </section>
-
-      <p v-if="!site.findings?.length" class="empty">No findings yet. Run a scan to check this site.</p>
+      </div>
     </main>
   </div>
 </template>
@@ -323,6 +439,80 @@ main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
 
 .empty { color: var(--text-secondary); text-align: center; padding: 3rem 0; }
 
+/* Tabs */
+.tabs {
+  display: flex; gap: 0; margin-bottom: 1.5rem;
+  border-bottom: 2px solid var(--border);
+}
+.tab {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.625rem 1.25rem; border: none; background: none;
+  font-size: 0.875rem; font-weight: 600; color: var(--text-tertiary);
+  cursor: pointer; border-bottom: 2px solid transparent;
+  margin-bottom: -2px; transition: color 0.15s, border-color 0.15s;
+}
+.tab:hover { color: var(--text-primary); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-badge {
+  font-size: 0.625rem; font-weight: 700; text-transform: uppercase;
+  padding: 0.1rem 0.4rem; border-radius: 999px;
+  background: oklch(0.92 0.05 60); color: oklch(0.45 0.12 60);
+}
+
+/* Growth Plan tab */
+.growth-tab { max-width: 640px; }
+.growth-intro { margin-bottom: 1.5rem; }
+.growth-intro h3 { font-size: 1.125rem; font-weight: 700; margin: 0 0 0.375rem; color: var(--text-primary); }
+.growth-intro p { font-size: 0.875rem; color: var(--text-secondary); line-height: 1.5; }
+
+.biz-form { display: flex; flex-direction: column; gap: 1.25rem; margin-bottom: 2rem; }
+.form-group { display: flex; flex-direction: column; gap: 0.375rem; }
+.form-group label { font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); }
+.form-group .hint { font-weight: 400; color: var(--text-tertiary); }
+.form-group input {
+  padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-1); color: var(--text-primary); font-size: 0.875rem;
+  outline: none; transition: border-color 0.15s;
+}
+.form-group input:focus { border-color: var(--accent); }
+.form-group input::placeholder { color: var(--text-tertiary); }
+
+.competitor-row { display: flex; gap: 0.5rem; margin-bottom: 0.375rem; }
+.competitor-row input { flex: 1; }
+.btn-icon {
+  width: 2rem; height: 2rem; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: 6px; background: none;
+  color: var(--text-tertiary); cursor: pointer; font-size: 0.75rem; flex-shrink: 0;
+}
+.btn-icon:hover { border-color: var(--danger); color: var(--danger); }
+.btn-add-competitor {
+  align-self: flex-start; padding: 0.3rem 0.75rem; border: 1px dashed var(--border);
+  border-radius: 6px; background: none; font-size: 0.8125rem; color: var(--text-secondary);
+  cursor: pointer;
+}
+.btn-add-competitor:hover { border-color: var(--accent); color: var(--accent); }
+
+.growth-status { margin-top: 1.5rem; display: flex; flex-direction: column; gap: 1rem; }
+.status-card {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 1rem 1.25rem; background: var(--surface-1);
+  border: 1px solid oklch(0.85 0.08 150); border-radius: 12px;
+}
+.status-icon {
+  width: 2rem; height: 2rem; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; background: oklch(0.92 0.06 150); color: oklch(0.4 0.15 150);
+  font-size: 0.875rem; font-weight: 700; flex-shrink: 0;
+}
+.status-card h4 { font-size: 0.875rem; font-weight: 600; margin: 0; color: var(--text-primary); }
+.status-card p { font-size: 0.8125rem; color: var(--text-secondary); margin: 0; }
+
+.coming-soon {
+  padding: 1.25rem; background: var(--surface-1);
+  border: 1px dashed var(--border); border-radius: 12px; text-align: center;
+}
+.coming-soon h4 { font-size: 0.9375rem; font-weight: 600; margin: 0 0 0.375rem; color: var(--text-primary); }
+.coming-soon p { font-size: 0.8125rem; color: var(--text-tertiary); margin: 0; }
+
 /* Spinner */
 .spinner {
   width: 0.875rem; height: 0.875rem; border-radius: 50%;
@@ -340,6 +530,9 @@ main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
   .status-pill.severity.low { background: oklch(0.25 0.04 250); color: oklch(0.7 0.08 250); }
   .section-title-passed { color: oklch(0.65 0.12 150); }
   .summary-stat.passed .summary-number { color: oklch(0.65 0.15 150); }
+  .tab-badge { background: oklch(0.25 0.05 60); color: oklch(0.75 0.1 60); }
+  .status-card { border-color: oklch(0.35 0.06 150); }
+  .status-icon { background: oklch(0.25 0.06 150); color: oklch(0.75 0.12 150); }
 }
 </style>
 

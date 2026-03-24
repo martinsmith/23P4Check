@@ -23,14 +23,24 @@ export interface Finding {
   created_at: string
 }
 
+export interface Competitor {
+  id: number
+  site_id: number
+  domain: string
+}
+
 export interface Site {
   id: number
   user_id: number
   url: string
   name: string | null
+  business_type: string | null
+  location: string | null
+  service_area: string | null
   last_scanned_at: string | null
   open_findings_count?: number
   findings?: Finding[]
+  competitors?: Competitor[]
   created_at: string
   updated_at: string
 }

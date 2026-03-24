@@ -132,6 +132,69 @@ class ApiTest extends TestCase
         $this->assertDatabaseMissing('sites', ['id' => $site->id]);
     }
 
+    // --- Update Site (Business Context) ---
+
+    public function test_can_update_business_context(): void
+    {
+        $site = Site::factory()->create(['user_id' => $this->user->id]);
+
+        $response = $this->actingAs($this->user)
+            ->putJson("/api/sites/{$site->id}", [
+                'business_type' => 'Plumber',
+                'location' => 'Manchester, UK',
+                'service_area' => 'Greater Manchester',
+                'competitors' => ['rival1.com', 'rival2.com'],
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('site.business_type', 'Plumber')
+            ->assertJsonPath('site.location', 'Manchester, UK');
+
+        $this->assertDatabaseHas('sites', [
+            'id' => $site->id,
+            'business_type' => 'Plumber',
+            'location' => 'Manchester, UK',
+            'service_area' => 'Greater Manchester',
+        ]);
+
+        $this->assertEquals(2, $site->competitors()->count());
+        $this->assertDatabaseHas('competitors', ['site_id' => $site->id, 'domain' => 'rival1.com']);
+    }
+
+    public function test_competitors_limited_to_five(): void
+    {
+        $site = Site::factory()->create(['user_id' => $this->user->id]);
+
+        $response = $this->actingAs($this->user)
+            ->putJson("/api/sites/{$site->id}", [
+                'competitors' => ['a.com', 'b.com', 'c.com', 'd.com', 'e.com', 'f.com'],
+            ]);
+
+        $response->assertStatus(422);
+    }
+
+    public function test_cannot_update_other_users_site(): void
+    {
+        $site = Site::factory()->create();
+
+        $response = $this->actingAs($this->user)
+            ->putJson("/api/sites/{$site->id}", ['business_type' => 'Test']);
+
+        $response->assertStatus(403);
+    }
+
+    public function test_show_includes_competitors(): void
+    {
+        $site = Site::factory()->create(['user_id' => $this->user->id]);
+        $site->competitors()->create(['domain' => 'example-rival.com']);
+
+        $response = $this->actingAs($this->user)
+            ->getJson("/api/sites/{$site->id}");
+
+        $response->assertOk()
+            ->assertJsonPath('site.competitors.0.domain', 'example-rival.com');
+    }
+
     // --- Scan ---
 
     public function test_can_scan_site(): void

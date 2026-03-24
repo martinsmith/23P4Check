@@ -11,7 +11,7 @@ class Site extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['url', 'name', 'last_scanned_at'];
+    protected $fillable = ['url', 'name', 'business_type', 'location', 'service_area', 'last_scanned_at'];
 
     protected function casts(): array
     {
@@ -33,5 +33,10 @@ class Site extends Model
     public function keywords(): HasMany
     {
         return $this->hasMany(Keyword::class);
+    }
+
+    public function competitors(): HasMany
+    {
+        return $this->hasMany(Competitor::class);
     }
 }
