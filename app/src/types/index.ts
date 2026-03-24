@@ -97,3 +97,23 @@ export interface DashboardData {
   }>
 }
 
+export interface CompetitorResult {
+  competitor_id: number
+  domain: string
+  results: Record<string, boolean> | null
+  passed: number | null
+  failed: number | null
+  total: number | null
+  scanned_at: string | null
+}
+
+export interface CompetitorComparisonData {
+  own: {
+    results: Record<string, boolean>
+    passed: number
+    failed: number
+    total: number
+  }
+  competitors: CompetitorResult[]
+}
+

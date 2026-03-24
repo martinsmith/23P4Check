@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
 import { useAuth } from '../composables/useAuth'
-import type { Site, Mission, DashboardData } from '../types'
+import type { Site, Mission, DashboardData, CompetitorComparisonData } from '../types'
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()
@@ -15,7 +15,7 @@ const loading = ref(true)
 const scanning = ref(false)
 const saving = ref(false)
 const error = ref('')
-const activeTab = ref<'progress' | 'health' | 'growth'>('progress')
+const activeTab = ref<'progress' | 'health' | 'growth' | 'competitors'>('progress')
 
 const missions = ref<Mission[]>([])
 const generatingMissions = ref(false)
@@ -206,10 +206,34 @@ async function loadDashboard() {
   } catch {}
 }
 
+const competitorData = ref<CompetitorComparisonData | null>(null)
+const scanningCompetitors = ref(false)
+
+async function loadCompetitorResults() {
+  try {
+    competitorData.value = await api.get<CompetitorComparisonData>(`/sites/${props.id}/competitors/results`)
+  } catch {}
+}
+
+async function triggerCompetitorScan() {
+  scanningCompetitors.value = true
+  error.value = ''
+  try {
+    await api.post(`/sites/${props.id}/competitors/scan`)
+    await loadCompetitorResults()
+  } catch (e: any) {
+    error.value = e.message
+  } finally {
+    scanningCompetitors.value = false
+  }
+}
+
+const allCheckSlugs = Object.keys(checkMeta)
+
 onMounted(async () => {
   await loadSite()
   if (site.value) {
-    await Promise.all([loadMissions(), loadDashboard()])
+    await Promise.all([loadMissions(), loadDashboard(), loadCompetitorResults()])
   }
 })
 </script>
@@ -264,6 +288,10 @@ onMounted(async () => {
         <button class="tab" :class="{ active: activeTab === 'growth' }" @click="activeTab = 'growth'">
           Growth Plan
           <span v-if="!hasBusinessContext" class="tab-badge">Setup</span>
+        </button>
+        <button class="tab" :class="{ active: activeTab === 'competitors' }" @click="activeTab = 'competitors'"
+          v-if="site?.competitors?.length">
+          Competitors
         </button>
       </nav>
 
@@ -489,6 +517,55 @@ onMounted(async () => {
           <button class="btn-primary" @click="generateMissions" :disabled="generatingMissions" style="margin-top: 1rem;">
             <span v-if="generatingMissions" class="spinner" /> {{ generatingMissions ? 'Generating…' : 'Generate Growth Missions' }}
           </button>
+        </div>
+      </div>
+
+      <!-- ===== TAB: Competitors ===== -->
+      <div v-if="activeTab === 'competitors'" class="competitors-tab">
+        <div class="comp-header">
+          <p class="comp-intro">See how your site stacks up against your competitors across all 16 visibility checks.</p>
+          <button class="btn-primary" @click="triggerCompetitorScan" :disabled="scanningCompetitors">
+            <span v-if="scanningCompetitors" class="spinner" /> {{ scanningCompetitors ? 'Scanning…' : 'Scan Competitors' }}
+          </button>
+        </div>
+
+        <div v-if="competitorData" class="comp-table-wrap">
+          <table class="comp-table">
+            <thead>
+              <tr>
+                <th class="comp-check-col">Check</th>
+                <th class="comp-site-col you">Your Site</th>
+                <th v-for="c in competitorData.competitors" :key="c.competitor_id" class="comp-site-col">
+                  {{ c.domain }}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="slug in allCheckSlugs" :key="slug">
+                <td class="comp-check-name">{{ checkLabel(slug) }}</td>
+                <td class="comp-cell" :class="competitorData.own.results[slug] ? 'pass' : 'fail'">
+                  {{ competitorData.own.results[slug] === undefined ? '—' : competitorData.own.results[slug] ? '✓' : '✗' }}
+                </td>
+                <td v-for="c in competitorData.competitors" :key="c.competitor_id" class="comp-cell"
+                  :class="c.results?.[slug] ? 'pass' : c.results?.[slug] === false ? 'fail' : ''">
+                  {{ c.results == null ? '—' : c.results[slug] ? '✓' : '✗' }}
+                </td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr class="comp-totals">
+                <td>Score</td>
+                <td class="comp-cell you">{{ competitorData.own.passed }}/{{ competitorData.own.total }}</td>
+                <td v-for="c in competitorData.competitors" :key="c.competitor_id" class="comp-cell">
+                  {{ c.passed != null ? `${c.passed}/${c.total}` : '—' }}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <div v-else class="empty">
+          <p>Click "Scan Competitors" to run the 16 visibility checks against your competitors.</p>
         </div>
       </div>
     </main>
@@ -841,8 +918,36 @@ main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
 .legend-dot.passed { background: oklch(0.55 0.18 150); }
 .legend-dot.failed { background: oklch(0.6 0.15 25); }
 
+/* Competitors tab */
+.competitors-tab { padding-top: 0.5rem; }
+.comp-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 1.5rem; gap: 1rem; flex-wrap: wrap;
+}
+.comp-intro { font-size: 0.875rem; color: var(--text-secondary); margin: 0; }
+.comp-table-wrap { overflow-x: auto; }
+.comp-table {
+  width: 100%; border-collapse: collapse; font-size: 0.8125rem;
+}
+.comp-table th, .comp-table td {
+  padding: 0.5rem 0.75rem; text-align: center;
+  border-bottom: 1px solid var(--border);
+}
+.comp-table th { font-weight: 600; color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.comp-check-col { text-align: left !important; }
+.comp-check-name { text-align: left; font-weight: 500; color: var(--text-primary); white-space: nowrap; }
+.comp-site-col.you { background: oklch(0.96 0.02 150); }
+.comp-cell.pass { color: oklch(0.45 0.18 150); font-weight: 700; }
+.comp-cell.fail { color: oklch(0.55 0.18 25); font-weight: 700; }
+.comp-cell.you { background: oklch(0.96 0.02 150); }
+.comp-totals td { font-weight: 700; border-top: 2px solid var(--border); }
+.comp-totals .comp-cell.you { background: oklch(0.96 0.02 150); }
+
 /* Dark mode overrides */
 @media (prefers-color-scheme: dark) {
+  .comp-site-col.you, .comp-cell.you, .comp-totals .comp-cell.you { background: oklch(0.2 0.02 150); }
+  .comp-cell.pass { color: oklch(0.7 0.15 150); }
+  .comp-cell.fail { color: oklch(0.7 0.15 25); }
   .check-card.pass { border-color: oklch(0.35 0.06 150); }
   .status-pill.passed { background: oklch(0.25 0.06 150); color: oklch(0.75 0.12 150); }
   .status-pill.severity.high { background: oklch(0.25 0.06 25); color: oklch(0.75 0.12 25); }

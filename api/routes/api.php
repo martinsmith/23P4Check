@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\CompetitorScanController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\MissionController;
 use App\Http\Controllers\ScanController;
@@ -27,4 +28,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Dashboard
     Route::get('/sites/{site}/dashboard', [DashboardController::class, 'show']);
+
+    // Competitor scanning
+    Route::post('/sites/{site}/competitors/scan', [CompetitorScanController::class, 'scan']);
+    Route::get('/sites/{site}/competitors/results', [CompetitorScanController::class, 'results']);
 });

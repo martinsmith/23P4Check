@@ -585,4 +585,109 @@ class ApiTest extends TestCase
             ->getJson("/api/sites/{$site->id}/dashboard")
             ->assertForbidden();
     }
+
+    // --- Competitor Scanning ---
+
+    public function test_can_scan_competitors(): void
+    {
+        $competitorHtml = '<html lang="en"><head><title>Comp</title>'
+            . '<meta name="description" content="A competitor">'
+            . '<meta charset="utf-8">'
+            . '<meta name="viewport" content="width=device-width">'
+            . '</head><body><h1>Competitor</h1></body></html>';
+
+        Http::fake([
+            'https://competitor1.com' => Http::response($competitorHtml, 200),
+            'https://competitor1.com/sitemap.xml' => Http::response('not found', 404),
+            'https://competitor1.com/robots.txt' => Http::response('not found', 404),
+            'https://competitor2.com' => Http::response($competitorHtml, 200),
+            'https://competitor2.com/sitemap.xml' => Http::response('not found', 404),
+            'https://competitor2.com/robots.txt' => Http::response('not found', 404),
+        ]);
+
+        $site = Site::factory()->create(['user_id' => $this->user->id]);
+        $site->competitors()->createMany([
+            ['domain' => 'competitor1.com'],
+            ['domain' => 'competitor2.com'],
+        ]);
+
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/competitors/scan");
+
+        $response->assertOk();
+        $response->assertJsonCount(2, 'scans');
+        $response->assertJsonPath('scans.0.domain', 'competitor1.com');
+        $this->assertEquals(16, $response->json('scans.0.total'));
+
+        // Verify DB records
+        $this->assertEquals(2, \App\Models\CompetitorScan::where('site_id', $site->id)->count());
+    }
+
+    public function test_competitor_results_returns_comparison(): void
+    {
+        $ownHtml = '<html lang="en"><head><title>My Site</title>'
+            . '<meta charset="utf-8"><meta name="description" content="My desc">'
+            . '<meta name="viewport" content="width=device-width">'
+            . '</head><body><h1>Hello</h1></body></html>';
+
+        Http::fake([
+            'https://example.com' => Http::response($ownHtml, 200),
+            'https://example.com/sitemap.xml' => Http::response('not found', 404),
+            'https://example.com/robots.txt' => Http::response('not found', 404),
+        ]);
+
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+            'url' => 'https://example.com',
+        ]);
+        $comp = $site->competitors()->create(['domain' => 'rival.com']);
+
+        // Create a competitor scan record
+        \App\Models\CompetitorScan::create([
+            'competitor_id' => $comp->id,
+            'site_id' => $site->id,
+            'results' => ['title' => true, 'meta_description' => false, 'h1' => true],
+            'passed_count' => 2,
+            'failed_count' => 1,
+            'total_checks' => 3,
+        ]);
+
+        $response = $this->actingAs($this->user)
+            ->getJson("/api/sites/{$site->id}/competitors/results");
+
+        $response->assertOk();
+        $response->assertJsonStructure([
+            'own' => ['results', 'passed', 'failed', 'total'],
+            'competitors' => [['competitor_id', 'domain', 'results', 'passed', 'failed', 'total', 'scanned_at']],
+        ]);
+        $response->assertJsonPath('competitors.0.domain', 'rival.com');
+        $response->assertJsonPath('competitors.0.passed', 2);
+        // Own site should show title as passing (apples-to-apples with scanUrl)
+        $this->assertTrue($response->json('own.results.title'));
+    }
+
+    public function test_competitor_scan_requires_auth(): void
+    {
+        $site = Site::factory()->create(['user_id' => $this->user->id]);
+
+        $other = \App\Models\User::factory()->create();
+        $this->actingAs($other)
+            ->postJson("/api/sites/{$site->id}/competitors/scan")
+            ->assertForbidden();
+
+        $this->actingAs($other)
+            ->getJson("/api/sites/{$site->id}/competitors/results")
+            ->assertForbidden();
+    }
+
+    public function test_competitor_scan_requires_competitors(): void
+    {
+        $site = Site::factory()->create(['user_id' => $this->user->id]);
+
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/competitors/scan");
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('error', 'No competitors configured');
+    }
 }

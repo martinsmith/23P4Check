@@ -271,6 +271,96 @@ class Scanner
         }
     }
 
+    /**
+     * Lightweight scan of any URL — returns ['check' => bool] without creating findings.
+     * Used for competitor scanning.
+     */
+    public function scanUrl(string $url): array
+    {
+        $url = rtrim($url, '/');
+        $checks = [];
+
+        try {
+            $start = microtime(true);
+            $response = Http::timeout(15)->get($url);
+            $ttfb = round((microtime(true) - $start) * 1000);
+            $html = $response->body();
+            $status = $response->status();
+        } catch (\Exception $e) {
+            return ['error' => 'Could not reach site: ' . $e->getMessage()];
+        }
+
+        // Title
+        preg_match('/<title>(.*?)<\/title>/is', $html, $m);
+        $checks['title'] = !empty(trim($m[1] ?? ''));
+
+        // Meta description
+        preg_match('/<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']/is', $html, $m);
+        $checks['meta_description'] = !empty(trim($m[1] ?? ''));
+
+        // H1
+        preg_match_all('/<h1[^>]*>(.*?)<\/h1>/is', $html, $matches);
+        $checks['h1'] = count($matches[1]) === 1;
+
+        // TTFB
+        $checks['ttfb'] = $ttfb <= 800;
+
+        // HTTPS
+        $checks['https'] = str_starts_with($url, 'https://');
+
+        // Indexability
+        $noindex = (bool) preg_match('/<meta[^>]+name=["\']robots["\'][^>]+content=["\'][^"\']*noindex/is', $html);
+        $checks['indexability'] = $status === 200 && !$noindex;
+
+        // Viewport
+        $checks['viewport'] = (bool) preg_match('/<meta[^>]+name=["\']viewport["\']/is', $html);
+
+        // Canonical
+        preg_match('/<link[^>]+rel=["\']canonical["\'][^>]+href=["\'](.*?)["\']/is', $html, $m);
+        $checks['canonical'] = !empty(trim($m[1] ?? ''));
+
+        // Lang attribute
+        $checks['lang_attribute'] = (bool) preg_match('/<html[^>]+lang=["\']([^"\']+)["\']/is', $html);
+
+        // Charset
+        $checks['charset'] = (bool) preg_match('/<meta[^>]+charset=["\'"]?[^"\'>]+/is', $html)
+            || (bool) preg_match('/<meta[^>]+http-equiv=["\']Content-Type["\']/is', $html);
+
+        // Analytics
+        $checks['analytics'] = (bool) preg_match('/google-analytics\.com|googletagmanager\.com|gtag\(|analytics\.js|ga\.js|plausible\.io|umami/is', $html);
+
+        // GSC
+        $checks['gsc_verification'] = (bool) preg_match('/<meta[^>]+name=["\']google-site-verification["\']/is', $html);
+
+        // Structured data
+        $checks['structured_data'] = (bool) preg_match('/<script[^>]+type=["\']application\/ld\+json["\']/is', $html);
+
+        // XML sitemap
+        try {
+            $sitemapResponse = Http::timeout(10)->get($url . '/sitemap.xml');
+            $checks['xml_sitemap'] = $sitemapResponse->ok() && str_contains($sitemapResponse->body(), '<urlset');
+        } catch (\Exception $e) {
+            $checks['xml_sitemap'] = false;
+        }
+
+        // robots.txt
+        try {
+            $robotsResponse = Http::timeout(10)->get($url . '/robots.txt');
+            $checks['robots_txt'] = $robotsResponse->ok() && strlen(trim($robotsResponse->body())) > 0;
+        } catch (\Exception $e) {
+            $checks['robots_txt'] = false;
+        }
+
+        // GBP
+        $hasGbpLink = (bool) preg_match('/(?:href|src)=["\'][^"\']*(?:google\.com\/maps|maps\.google\.com|business\.google\.com|goo\.gl\/maps|maps\.app\.goo\.gl)/is', $html);
+        if (!$hasGbpLink) {
+            $hasGbpLink = (bool) preg_match('/<iframe[^>]+src=["\'][^"\']*google\.com\/maps\/embed/is', $html);
+        }
+        $checks['google_business_profile'] = $hasGbpLink;
+
+        return $checks;
+    }
+
     private function createFinding(Site $site, string $slug, string $description, string $severity): void
     {
         // Remove any previous passed finding for this check
