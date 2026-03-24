@@ -79,3 +79,21 @@ export interface ScanResult {
   error?: string
 }
 
+export interface DashboardData {
+  visibility_score: number
+  checks: { passed: number; failed: number; total: number }
+  missions: {
+    total: number
+    completed: number
+    steps: { total: number; completed: number }
+    pct: number
+  }
+  trend: Array<{
+    passed: number
+    failed: number
+    total: number
+    score: number
+    date: string
+  }>
+}
+

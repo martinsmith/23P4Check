@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
 import { useAuth } from '../composables/useAuth'
-import type { Site, Mission } from '../types'
+import type { Site, Mission, DashboardData } from '../types'
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()
@@ -15,10 +15,11 @@ const loading = ref(true)
 const scanning = ref(false)
 const saving = ref(false)
 const error = ref('')
-const activeTab = ref<'health' | 'growth'>('health')
+const activeTab = ref<'progress' | 'health' | 'growth'>('progress')
 
 const missions = ref<Mission[]>([])
 const generatingMissions = ref(false)
+const dashboard = ref<DashboardData | null>(null)
 
 // Business context form
 const bizForm = ref({ business_type: '', location: '', service_area: '' })
@@ -88,8 +89,14 @@ async function triggerScan() {
   scanning.value = true
   error.value = ''
   try {
-    const data = await api.post<{ site: Site }>(`/sites/${props.id}/scan`)
+    const data = await api.post<{ site: Site; missions?: Mission[] }>(`/sites/${props.id}/scan`)
     site.value = data.site
+    // Scan auto-regenerates missions — update if returned
+    if (data.missions) {
+      missions.value = data.missions
+    }
+    // Refresh dashboard with new snapshot
+    await loadDashboard()
   } catch (e: any) {
     error.value = e.message
   } finally {
@@ -193,9 +200,17 @@ const categoryLabels: Record<string, string> = {
   tracking: 'Tracking',
 }
 
+async function loadDashboard() {
+  try {
+    dashboard.value = await api.get<DashboardData>(`/sites/${props.id}/dashboard`)
+  } catch {}
+}
+
 onMounted(async () => {
   await loadSite()
-  if (site.value) await loadMissions()
+  if (site.value) {
+    await Promise.all([loadMissions(), loadDashboard()])
+  }
 })
 </script>
 
@@ -230,7 +245,7 @@ onMounted(async () => {
           </p>
         </div>
         <div class="actions">
-          <button class="btn-primary" @click="triggerScan" :disabled="scanning" v-if="activeTab === 'health'">
+          <button class="btn-primary" @click="triggerScan" :disabled="scanning" v-if="activeTab === 'health' || activeTab === 'progress'">
             <span v-if="scanning" class="spinner" /> {{ scanning ? 'Scanning…' : 'Run scan' }}
           </button>
           <button class="btn-danger-ghost" @click="deleteSite">Delete</button>
@@ -240,6 +255,9 @@ onMounted(async () => {
 
       <!-- Tabs -->
       <nav class="tabs">
+        <button class="tab" :class="{ active: activeTab === 'progress' }" @click="activeTab = 'progress'">
+          Progress
+        </button>
         <button class="tab" :class="{ active: activeTab === 'health' }" @click="activeTab = 'health'">
           Website Visibility
         </button>
@@ -248,6 +266,68 @@ onMounted(async () => {
           <span v-if="!hasBusinessContext" class="tab-badge">Setup</span>
         </button>
       </nav>
+
+      <!-- ===== TAB: Progress ===== -->
+      <div v-if="activeTab === 'progress'" class="progress-tab">
+        <div v-if="!dashboard && !site.last_scanned_at" class="empty">
+          <p>No data yet. Run a scan to see your progress.</p>
+        </div>
+
+        <div v-else-if="dashboard" class="dashboard-grid">
+          <!-- Visibility Score Ring -->
+          <div class="dash-card score-card">
+            <h3 class="dash-card-title">Visibility Score</h3>
+            <div class="score-ring">
+              <svg viewBox="0 0 120 120" class="ring-svg">
+                <circle cx="60" cy="60" r="52" class="ring-bg" />
+                <circle cx="60" cy="60" r="52" class="ring-fill"
+                  :style="{ strokeDashoffset: 326.7 - (326.7 * dashboard.visibility_score / 100) }" />
+              </svg>
+              <span class="ring-value">{{ dashboard.visibility_score }}</span>
+            </div>
+            <p class="dash-subtitle">{{ dashboard.checks.passed }}/{{ dashboard.checks.total }} checks passing</p>
+          </div>
+
+          <!-- Mission Progress -->
+          <div class="dash-card missions-card">
+            <h3 class="dash-card-title">Growth Missions</h3>
+            <div class="mission-stats">
+              <div class="mission-stat-row">
+                <span class="stat-label">Missions completed</span>
+                <span class="stat-value">{{ dashboard.missions.completed }}/{{ dashboard.missions.total }}</span>
+              </div>
+              <div class="mission-stat-row">
+                <span class="stat-label">Steps completed</span>
+                <span class="stat-value">{{ dashboard.missions.steps.completed }}/{{ dashboard.missions.steps.total }}</span>
+              </div>
+              <div class="progress-bar-wrap">
+                <div class="progress-bar-bg">
+                  <div class="progress-bar-fill" :style="{ width: dashboard.missions.pct + '%' }"></div>
+                </div>
+                <span class="progress-pct">{{ dashboard.missions.pct }}%</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Scan Trend -->
+          <div class="dash-card trend-card" v-if="dashboard.trend.length">
+            <h3 class="dash-card-title">Scan History</h3>
+            <div class="trend-chart">
+              <div v-for="(snap, i) in dashboard.trend" :key="i" class="trend-bar-group">
+                <div class="trend-bar-stack" :title="snap.date">
+                  <div class="trend-bar passed" :style="{ height: (snap.passed / snap.total * 100) + '%' }"></div>
+                  <div class="trend-bar failed" :style="{ height: (snap.failed / snap.total * 100) + '%' }"></div>
+                </div>
+                <span class="trend-label">{{ new Date(snap.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) }}</span>
+              </div>
+            </div>
+            <div class="trend-legend">
+              <span class="legend-item"><span class="legend-dot passed"></span> Passed</span>
+              <span class="legend-item"><span class="legend-dot failed"></span> Issues</span>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- ===== TAB: Website Visibility ===== -->
       <div v-if="activeTab === 'health'">
@@ -680,6 +760,86 @@ main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
   animation: spin 0.6s linear infinite; display: inline-block;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Progress Dashboard */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+.dash-card {
+  padding: 1.5rem; border-radius: 12px; background: var(--surface-1);
+  border: 1px solid var(--border);
+}
+.dash-card-title {
+  font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-tertiary); margin: 0 0 1rem;
+}
+.dash-subtitle {
+  font-size: 0.8125rem; color: var(--text-secondary); margin: 0.75rem 0 0; text-align: center;
+}
+
+/* Score Ring */
+.score-ring { position: relative; width: 120px; height: 120px; margin: 0 auto; }
+.ring-svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring-bg {
+  fill: none; stroke: var(--border); stroke-width: 8;
+}
+.ring-fill {
+  fill: none; stroke: oklch(0.55 0.18 150); stroke-width: 8;
+  stroke-linecap: round; stroke-dasharray: 326.7;
+  transition: stroke-dashoffset 0.6s ease;
+}
+.ring-value {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; font-size: 1.75rem; font-weight: 800; color: var(--text-primary);
+}
+
+/* Mission stats in dashboard */
+.mission-stats { display: flex; flex-direction: column; gap: 0.75rem; }
+.mission-stat-row {
+  display: flex; justify-content: space-between; align-items: center;
+}
+.stat-label { font-size: 0.8125rem; color: var(--text-secondary); }
+.stat-value { font-size: 0.875rem; font-weight: 700; color: var(--text-primary); }
+.progress-bar-wrap {
+  display: flex; align-items: center; gap: 0.75rem;
+}
+.progress-bar-bg {
+  flex: 1; height: 8px; background: var(--border); border-radius: 999px; overflow: hidden;
+}
+.progress-bar-bg .progress-bar-fill {
+  height: 100%; background: oklch(0.55 0.18 150); border-radius: 999px;
+  transition: width 0.3s ease;
+}
+.progress-pct { font-size: 0.8125rem; font-weight: 700; color: var(--text-primary); min-width: 2.5rem; text-align: right; }
+
+/* Scan Trend chart */
+.trend-card { grid-column: 1 / -1; }
+.trend-chart {
+  display: flex; gap: 0.375rem; align-items: flex-end;
+  height: 120px; padding-bottom: 1.5rem;
+}
+.trend-bar-group {
+  flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%;
+}
+.trend-bar-stack {
+  flex: 1; width: 100%; max-width: 32px; display: flex; flex-direction: column;
+  justify-content: flex-end; border-radius: 4px 4px 0 0; overflow: hidden;
+}
+.trend-bar.passed { background: oklch(0.55 0.18 150); }
+.trend-bar.failed { background: oklch(0.6 0.15 25); }
+.trend-label {
+  font-size: 0.5625rem; color: var(--text-tertiary); margin-top: 0.25rem;
+  white-space: nowrap;
+}
+.trend-legend {
+  display: flex; gap: 1rem; justify-content: center; margin-top: 0.5rem;
+}
+.legend-item { display: flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; color: var(--text-secondary); }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.legend-dot.passed { background: oklch(0.55 0.18 150); }
+.legend-dot.failed { background: oklch(0.6 0.15 25); }
 
 /* Dark mode overrides */
 @media (prefers-color-scheme: dark) {

@@ -44,4 +44,9 @@ class Site extends Model
     {
         return $this->hasMany(Mission::class);
     }
+
+    public function scanSnapshots(): HasMany
+    {
+        return $this->hasMany(ScanSnapshot::class);
+    }
 }

@@ -229,7 +229,7 @@ class ApiTest extends TestCase
             ->postJson("/api/sites/{$site->id}/scan");
 
         $response->assertOk()
-            ->assertJsonStructure(['site', 'results']);
+            ->assertJsonStructure(['site', 'results', 'missions']);
 
         $site->refresh();
         $this->assertNotNull($site->last_scanned_at);
@@ -238,6 +238,14 @@ class ApiTest extends TestCase
         $passedCount = $site->findings()->where('status', 'passed')->count();
         $this->assertEquals(16, $passedCount, "Expected 16 passed findings, got {$passedCount}");
         $this->assertEquals(0, $site->findings()->where('status', 'open')->count());
+
+        // Scan snapshot should be recorded
+        $this->assertDatabaseHas('scan_snapshots', [
+            'site_id'      => $site->id,
+            'passed_count' => 16,
+            'failed_count' => 0,
+            'total_checks' => 16,
+        ]);
     }
 
     // --- Complete Finding ---
@@ -437,5 +445,144 @@ class ApiTest extends TestCase
 
         $response->assertOk();
         $this->assertEmpty($response->json('missions'));
+    }
+
+    // --- Validation Flow ---
+
+    public function test_scan_auto_regenerates_missions_and_removes_resolved(): void
+    {
+        // HTML missing structured data — will trigger reactive mission
+        $htmlBroken = '<html lang="en"><head>'
+            . '<meta charset="utf-8"><title>Test</title>'
+            . '<meta name="description" content="A test page">'
+            . '<meta name="viewport" content="width=device-width">'
+            . '<link rel="canonical" href="https://example.com">'
+            . '<meta name="google-site-verification" content="abc123">'
+            . '<script src="https://www.googletagmanager.com/gtag/js"></script>'
+            . '</head><body><h1>Hello</h1>'
+            . '<a href="https://maps.app.goo.gl/abc123">Maps</a>'
+            . '</body></html>';
+
+        // HTML with structured data fixed
+        $htmlFixed = '<html lang="en"><head>'
+            . '<meta charset="utf-8"><title>Test</title>'
+            . '<meta name="description" content="A test page">'
+            . '<meta name="viewport" content="width=device-width">'
+            . '<link rel="canonical" href="https://example.com">'
+            . '<meta name="google-site-verification" content="abc123">'
+            . '<script type="application/ld+json">{"@type":"Organization"}</script>'
+            . '<script src="https://www.googletagmanager.com/gtag/js"></script>'
+            . '</head><body><h1>Hello</h1>'
+            . '<a href="https://maps.app.goo.gl/abc123">Maps</a>'
+            . '</body></html>';
+
+        // Use sequence: first request returns broken, second returns fixed
+        Http::fake([
+            'https://example.com' => Http::sequence()
+                ->push($htmlBroken, 200)
+                ->push($htmlFixed, 200),
+            'https://example.com/sitemap.xml' => Http::response('<?xml version="1.0"?><urlset></urlset>', 200),
+            'https://example.com/robots.txt' => Http::response("User-agent: *\nAllow: /", 200),
+        ]);
+
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+            'url' => 'https://example.com',
+            'business_type' => 'Plumber',
+            'location' => 'Manchester, UK',
+        ]);
+
+        // First scan — structured_data should be open
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/scan");
+
+        $response->assertOk();
+        $this->assertTrue($site->findings()->where('check', 'structured_data')->where('status', 'open')->exists());
+
+        // Reactive mission should appear
+        $slugs = collect($response->json('missions'))->pluck('slug')->toArray();
+        $this->assertContains('add-local-structured-data', $slugs);
+
+        // Second scan — structured data is now present
+        $response2 = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/scan");
+
+        $response2->assertOk();
+
+        // structured_data finding should now be passed
+        $this->assertTrue($site->findings()->where('check', 'structured_data')->where('status', 'passed')->exists());
+        $this->assertFalse($site->findings()->where('check', 'structured_data')->where('status', 'open')->exists());
+
+        // Reactive mission should be removed
+        $slugs2 = collect($response2->json('missions'))->pluck('slug')->toArray();
+        $this->assertNotContains('add-local-structured-data', $slugs2);
+
+        // Should have 2 scan snapshots
+        $this->assertEquals(2, $site->scanSnapshots()->count());
+    }
+
+    // --- Dashboard ---
+
+    public function test_dashboard_returns_scores_and_trend(): void
+    {
+        $html = '<html lang="en"><head>'
+            . '<meta charset="utf-8"><title>Test</title>'
+            . '<meta name="description" content="A test page">'
+            . '<meta name="viewport" content="width=device-width">'
+            . '<link rel="canonical" href="https://example.com">'
+            . '<meta name="google-site-verification" content="abc123">'
+            . '<script src="https://www.googletagmanager.com/gtag/js"></script>'
+            . '</head><body><h1>Hello</h1>'
+            . '<a href="https://maps.app.goo.gl/abc123">Maps</a>'
+            . '</body></html>';
+
+        Http::fake([
+            'https://example.com' => Http::response($html, 200),
+            'https://example.com/sitemap.xml' => Http::response('<?xml version="1.0"?><urlset></urlset>', 200),
+            'https://example.com/robots.txt' => Http::response("User-agent: *\nAllow: /", 200),
+        ]);
+
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+            'url' => 'https://example.com',
+            'business_type' => 'Plumber',
+            'location' => 'Manchester, UK',
+        ]);
+
+        // Scan to generate findings + snapshot
+        $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/scan")
+            ->assertOk();
+
+        // Get dashboard
+        $response = $this->actingAs($this->user)
+            ->getJson("/api/sites/{$site->id}/dashboard");
+
+        $response->assertOk();
+        $response->assertJsonStructure([
+            'visibility_score',
+            'checks' => ['passed', 'failed', 'total'],
+            'missions' => ['total', 'completed', 'steps', 'pct'],
+            'trend',
+        ]);
+
+        $data = $response->json();
+        $this->assertGreaterThan(0, $data['visibility_score']);
+        $this->assertEquals(16, $data['checks']['total']);
+        $this->assertCount(1, $data['trend']);
+        $this->assertEquals(16, $data['trend'][0]['total']);
+    }
+
+    public function test_dashboard_requires_auth(): void
+    {
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+        ]);
+
+        // Other user cannot access
+        $other = \App\Models\User::factory()->create();
+        $this->actingAs($other)
+            ->getJson("/api/sites/{$site->id}/dashboard")
+            ->assertForbidden();
     }
 }
