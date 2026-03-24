@@ -39,4 +39,9 @@ class Site extends Model
     {
         return $this->hasMany(Competitor::class);
     }
+
+    public function missions(): HasMany
+    {
+        return $this->hasMany(Mission::class);
+    }
 }

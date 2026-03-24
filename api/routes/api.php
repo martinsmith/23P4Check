@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\MissionController;
 use App\Http\Controllers\ScanController;
 use App\Http\Controllers\SiteController;
 use Illuminate\Support\Facades\Route;
@@ -17,4 +18,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::post('/sites/{site}/scan', [ScanController::class, 'store']);
     Route::post('/sites/{site}/findings/{finding}/complete', [ScanController::class, 'completeFinding']);
+
+    // Missions
+    Route::get('/sites/{site}/missions', [MissionController::class, 'index']);
+    Route::post('/sites/{site}/missions/generate', [MissionController::class, 'generate']);
+    Route::post('/sites/{site}/missions/{mission}/steps/{step}/toggle', [MissionController::class, 'completeStep']);
 });

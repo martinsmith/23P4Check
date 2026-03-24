@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\Finding;
+use App\Models\Mission;
+use App\Models\MissionStep;
 use App\Models\Site;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -208,7 +210,9 @@ class ApiTest extends TestCase
             . '<meta name="google-site-verification" content="abc123">'
             . '<script type="application/ld+json">{"@type":"Organization"}</script>'
             . '<script src="https://www.googletagmanager.com/gtag/js"></script>'
-            . '</head><body><h1>Hello</h1></body></html>';
+            . '</head><body><h1>Hello</h1>'
+            . '<a href="https://google.com/maps/place/Example">Find us on Google Maps</a>'
+            . '</body></html>';
 
         Http::fake([
             'https://example.com' => Http::response($html, 200),
@@ -230,9 +234,9 @@ class ApiTest extends TestCase
         $site->refresh();
         $this->assertNotNull($site->last_scanned_at);
 
-        // All 15 checks should pass with the well-formed test HTML
+        // All 16 checks should pass with the well-formed test HTML
         $passedCount = $site->findings()->where('status', 'passed')->count();
-        $this->assertEquals(15, $passedCount, "Expected 15 passed findings, got {$passedCount}");
+        $this->assertEquals(16, $passedCount, "Expected 16 passed findings, got {$passedCount}");
         $this->assertEquals(0, $site->findings()->where('status', 'open')->count());
     }
 
@@ -251,5 +255,187 @@ class ApiTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('finding.status', 'fixed');
+    }
+
+    // --- Missions ---
+
+    public function test_can_generate_missions_with_business_context_and_findings(): void
+    {
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+            'business_type' => 'Plumber',
+            'location' => 'Manchester, UK',
+            'service_area' => 'Greater Manchester',
+        ]);
+
+        // Create open findings that should trigger reactive missions
+        Finding::factory()->create([
+            'site_id' => $site->id,
+            'check' => 'structured_data',
+            'status' => 'open',
+        ]);
+        Finding::factory()->create([
+            'site_id' => $site->id,
+            'check' => 'google_business_profile',
+            'status' => 'open',
+        ]);
+
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/missions/generate");
+
+        $response->assertOk()
+            ->assertJsonStructure(['missions']);
+
+        $missions = $response->json('missions');
+        $this->assertNotEmpty($missions);
+
+        // Should include reactive missions triggered by open findings
+        $slugs = collect($missions)->pluck('slug')->toArray();
+        $this->assertContains('add-local-structured-data', $slugs);
+        $this->assertContains('claim-google-business-profile', $slugs);
+    }
+
+    public function test_missions_are_idempotent(): void
+    {
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+            'business_type' => 'Plumber',
+            'location' => 'Manchester, UK',
+        ]);
+
+        // Generate twice
+        $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/missions/generate");
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/missions/generate");
+
+        $response->assertOk();
+
+        // No duplicates — count unique slugs should equal total count
+        $missions = $response->json('missions');
+        $slugs = collect($missions)->pluck('slug');
+        $this->assertEquals($slugs->count(), $slugs->unique()->count());
+    }
+
+    public function test_can_list_missions(): void
+    {
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+            'business_type' => 'Plumber',
+            'location' => 'Manchester, UK',
+        ]);
+
+        // Generate missions first
+        $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/missions/generate");
+
+        $response = $this->actingAs($this->user)
+            ->getJson("/api/sites/{$site->id}/missions");
+
+        $response->assertOk()
+            ->assertJsonStructure(['missions' => [['id', 'slug', 'title', 'steps']]]);
+    }
+
+    public function test_can_toggle_step_completion(): void
+    {
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+            'business_type' => 'Plumber',
+            'location' => 'Manchester, UK',
+        ]);
+
+        // Generate missions
+        $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/missions/generate");
+
+        $mission = $site->missions()->first();
+        $step = $mission->steps()->first();
+
+        // Toggle on
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/missions/{$mission->id}/steps/{$step->id}/toggle");
+
+        $response->assertOk();
+        $this->assertTrue($response->json('mission.steps.0.completed'));
+
+        // Toggle off
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/missions/{$mission->id}/steps/{$step->id}/toggle");
+
+        $response->assertOk();
+        $this->assertFalse($response->json('mission.steps.0.completed'));
+    }
+
+    public function test_mission_status_updates_on_step_completion(): void
+    {
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+            'business_type' => 'Plumber',
+            'location' => 'Manchester, UK',
+        ]);
+
+        $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/missions/generate");
+
+        $mission = $site->missions()->first();
+        $steps = $mission->steps;
+
+        // Complete all steps
+        foreach ($steps as $step) {
+            $this->actingAs($this->user)
+                ->postJson("/api/sites/{$site->id}/missions/{$mission->id}/steps/{$step->id}/toggle");
+        }
+
+        $mission->refresh();
+        $this->assertEquals('completed', $mission->status);
+    }
+
+    public function test_cannot_access_other_users_missions(): void
+    {
+        $otherUser = User::factory()->create();
+        $site = Site::factory()->create([
+            'user_id' => $otherUser->id,
+            'business_type' => 'Plumber',
+            'location' => 'Manchester, UK',
+        ]);
+
+        $response = $this->actingAs($this->user)
+            ->getJson("/api/sites/{$site->id}/missions");
+
+        $response->assertStatus(403);
+    }
+
+    public function test_reactive_missions_require_open_findings(): void
+    {
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+            'business_type' => 'Plumber',
+            'location' => 'Manchester, UK',
+        ]);
+
+        // No open findings — reactive missions should not appear
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/missions/generate");
+
+        $slugs = collect($response->json('missions'))->pluck('slug')->toArray();
+        $this->assertNotContains('add-local-structured-data', $slugs);
+        $this->assertNotContains('optimise-title-for-local', $slugs);
+        $this->assertNotContains('claim-google-business-profile', $slugs);
+
+        // Proactive missions should still appear (only need business context)
+        $this->assertContains('set-up-review-generation', $slugs);
+    }
+
+    public function test_no_missions_without_business_context(): void
+    {
+        $site = Site::factory()->create([
+            'user_id' => $this->user->id,
+        ]);
+
+        $response = $this->actingAs($this->user)
+            ->postJson("/api/sites/{$site->id}/missions/generate");
+
+        $response->assertOk();
+        $this->assertEmpty($response->json('missions'));
     }
 }

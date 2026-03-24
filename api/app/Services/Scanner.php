@@ -41,6 +41,7 @@ class Scanner
         $this->checkStructuredData($site, $html, $results);
         $this->checkXmlSitemap($site, $url, $results);
         $this->checkRobotsTxt($site, $url, $results);
+        $this->checkGoogleBusinessProfile($site, $html, $results);
 
         $site->update(['last_scanned_at' => now()]);
 
@@ -251,6 +252,25 @@ class Scanner
         }
     }
 
+    private function checkGoogleBusinessProfile(Site $site, string $html, array &$results): void
+    {
+        // Check for links to GBP/Google Maps (all known URL formats)
+        $hasGbpLink = (bool) preg_match('/(?:href|src)=["\'][^"\']*(?:google\.com\/maps|maps\.google\.com|business\.google\.com|goo\.gl\/maps|maps\.app\.goo\.gl)/is', $html);
+
+        // Also check for embedded Google Maps iframes
+        if (!$hasGbpLink) {
+            $hasGbpLink = (bool) preg_match('/<iframe[^>]+src=["\'][^"\']*google\.com\/maps\/embed/is', $html);
+        }
+
+        $results['has_google_business_profile'] = $hasGbpLink;
+
+        if (!$hasGbpLink) {
+            $this->createFinding($site, 'google_business_profile', 'Your site does not link to a Google Business Profile — add a link or embed a Google Map so local customers can find you', 'medium');
+        } else {
+            $this->createPassedFinding($site, 'google_business_profile', 'Google Business Profile or Maps link found on the page');
+        }
+    }
+
     private function createFinding(Site $site, string $slug, string $description, string $severity): void
     {
         // Remove any previous passed finding for this check
@@ -298,6 +318,7 @@ class Scanner
             'structured_data' => 'Add JSON-LD structured data for rich search results',
             'xml_sitemap'     => 'Create and submit an XML sitemap',
             'robots_txt'      => 'Add a robots.txt file with crawl directives',
+            'google_business_profile' => 'Create a Google Business Profile and link to it from your site',
             default           => 'Review and fix: ' . $slug,
         };
     }

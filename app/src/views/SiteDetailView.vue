@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useApi } from '../composables/useApi'
 import { useAuth } from '../composables/useAuth'
-import type { Site } from '../types'
+import type { Site, Mission } from '../types'
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()
@@ -16,6 +16,9 @@ const scanning = ref(false)
 const saving = ref(false)
 const error = ref('')
 const activeTab = ref<'health' | 'growth'>('health')
+
+const missions = ref<Mission[]>([])
+const generatingMissions = ref(false)
 
 // Business context form
 const bizForm = ref({ business_type: '', location: '', service_area: '' })
@@ -58,6 +61,8 @@ async function saveBusinessContext() {
     })
     site.value = { ...site.value!, ...data.site }
     initBizForm()
+    // Auto-generate missions when business context is saved
+    await generateMissions()
   } catch (e: any) {
     error.value = e.message
   } finally {
@@ -97,6 +102,35 @@ async function completeFinding(findingId: number) {
   await loadSite()
 }
 
+async function loadMissions() {
+  try {
+    const data = await api.get<{ missions: Mission[] }>(`/sites/${props.id}/missions`)
+    missions.value = data.missions
+  } catch {}
+}
+
+async function generateMissions() {
+  generatingMissions.value = true
+  try {
+    const data = await api.post<{ missions: Mission[] }>(`/sites/${props.id}/missions/generate`)
+    missions.value = data.missions
+  } catch (e: any) {
+    error.value = e.message
+  } finally {
+    generatingMissions.value = false
+  }
+}
+
+async function toggleStep(mission: Mission, stepId: number) {
+  try {
+    const data = await api.post<{ mission: Mission }>(`/sites/${props.id}/missions/${mission.id}/steps/${stepId}/toggle`)
+    const idx = missions.value.findIndex(m => m.id === mission.id)
+    if (idx !== -1) missions.value[idx] = data.mission
+  } catch (e: any) {
+    error.value = e.message
+  }
+}
+
 async function deleteSite() {
   if (!confirm('Delete this site?')) return
   await api.del(`/sites/${props.id}`)
@@ -132,6 +166,7 @@ const checkMeta: Record<string, { label: string; category: string }> = {
   structured_data: { label: 'Structured Data', category: 'Technical' },
   xml_sitemap: { label: 'XML Sitemap', category: 'Technical' },
   robots_txt: { label: 'robots.txt', category: 'Technical' },
+  google_business_profile: { label: 'Google Business Profile', category: 'Visibility' },
 }
 
 function checkLabel(slug: string): string {
@@ -142,7 +177,26 @@ function checkCategory(slug: string): string {
   return checkMeta[slug]?.category ?? 'Other'
 }
 
-onMounted(loadSite)
+const missionProgress = computed(() => {
+  const total = missions.value.reduce((sum, m) => sum + m.steps.length, 0)
+  const done = missions.value.reduce((sum, m) => sum + m.steps.filter(s => s.completed).length, 0)
+  return { total, done, pct: total ? Math.round((done / total) * 100) : 0 }
+})
+
+const pendingMissions = computed(() => missions.value.filter(m => m.status !== 'completed'))
+const completedMissions = computed(() => missions.value.filter(m => m.status === 'completed'))
+
+const categoryLabels: Record<string, string> = {
+  local_seo: 'Local SEO',
+  content: 'Content',
+  technical: 'Technical',
+  tracking: 'Tracking',
+}
+
+onMounted(async () => {
+  await loadSite()
+  if (site.value) await loadMissions()
+})
 </script>
 
 <template>
@@ -187,7 +241,7 @@ onMounted(loadSite)
       <!-- Tabs -->
       <nav class="tabs">
         <button class="tab" :class="{ active: activeTab === 'health' }" @click="activeTab = 'health'">
-          Website Health
+          Website Visibility
         </button>
         <button class="tab" :class="{ active: activeTab === 'growth' }" @click="activeTab = 'growth'">
           Growth Plan
@@ -195,7 +249,7 @@ onMounted(loadSite)
         </button>
       </nav>
 
-      <!-- ===== TAB: Website Health ===== -->
+      <!-- ===== TAB: Website Visibility ===== -->
       <div v-if="activeTab === 'health'">
         <!-- Summary bar -->
         <div v-if="site.findings?.length" class="summary-bar">
@@ -288,8 +342,63 @@ onMounted(loadSite)
           </button>
         </form>
 
-        <!-- Placeholder for future missions content when context is set -->
-        <div v-if="hasBusinessContext" class="growth-status">
+        <!-- Missions -->
+        <div v-if="hasBusinessContext && missions.length" class="missions-section">
+          <div class="missions-header">
+            <div>
+              <h3 class="section-title">Your Growth Missions</h3>
+              <p class="missions-subtitle">{{ missionProgress.done }}/{{ missionProgress.total }} steps completed ({{ missionProgress.pct }}%)</p>
+            </div>
+            <button class="btn-ghost" @click="generateMissions" :disabled="generatingMissions">
+              <span v-if="generatingMissions" class="spinner" /> {{ generatingMissions ? 'Updating…' : '↻ Refresh' }}
+            </button>
+          </div>
+
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" :style="{ width: missionProgress.pct + '%' }" />
+          </div>
+
+          <!-- Active missions -->
+          <div v-if="pendingMissions.length" class="mission-list">
+            <div v-for="m in pendingMissions" :key="m.id" class="mission-card" :class="m.status">
+              <div class="mission-card-top">
+                <span class="category-badge">{{ categoryLabels[m.category] || m.category }}</span>
+                <span class="mission-type-badge" :class="m.type">{{ m.type }}</span>
+              </div>
+              <h4 class="mission-title">{{ m.title }}</h4>
+              <p class="mission-desc">{{ m.description }}</p>
+              <div class="mission-steps">
+                <div
+                  v-for="s in m.steps"
+                  :key="s.id"
+                  class="step-item"
+                  :class="{ done: s.completed }"
+                  @click="toggleStep(m, s.id)"
+                >
+                  <span class="step-check">{{ s.completed ? '✓' : '○' }}</span>
+                  <span>{{ s.description }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Completed missions -->
+          <div v-if="completedMissions.length" class="completed-section">
+            <h3 class="section-title section-title-passed">Completed Missions</h3>
+            <div class="mission-list">
+              <div v-for="m in completedMissions" :key="m.id" class="mission-card completed">
+                <div class="mission-card-top">
+                  <span class="category-badge">{{ categoryLabels[m.category] || m.category }}</span>
+                  <span class="status-pill passed">✓ Done</span>
+                </div>
+                <h4 class="mission-title">{{ m.title }}</h4>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Empty state when context saved but no missions generated yet -->
+        <div v-else-if="hasBusinessContext && !missions.length" class="growth-status">
           <div class="status-card">
             <span class="status-icon">✓</span>
             <div>
@@ -297,10 +406,9 @@ onMounted(loadSite)
               <p>{{ site.business_type }} · {{ site.location }}</p>
             </div>
           </div>
-          <div class="coming-soon">
-            <h4>Missions &amp; SERP Tracking</h4>
-            <p>Growth missions and keyword tracking will appear here once enabled. Your business context is ready.</p>
-          </div>
+          <button class="btn-primary" @click="generateMissions" :disabled="generatingMissions" style="margin-top: 1rem;">
+            <span v-if="generatingMissions" class="spinner" /> {{ generatingMissions ? 'Generating…' : 'Generate Growth Missions' }}
+          </button>
         </div>
       </div>
     </main>
@@ -506,12 +614,64 @@ main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
 .status-card h4 { font-size: 0.875rem; font-weight: 600; margin: 0; color: var(--text-primary); }
 .status-card p { font-size: 0.8125rem; color: var(--text-secondary); margin: 0; }
 
-.coming-soon {
-  padding: 1.25rem; background: var(--surface-1);
-  border: 1px dashed var(--border); border-radius: 12px; text-align: center;
+/* Missions */
+.missions-section { margin-top: 2rem; }
+.missions-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 1rem;
 }
-.coming-soon h4 { font-size: 0.9375rem; font-weight: 600; margin: 0 0 0.375rem; color: var(--text-primary); }
-.coming-soon p { font-size: 0.8125rem; color: var(--text-tertiary); margin: 0; }
+.missions-subtitle { font-size: 0.8125rem; color: var(--text-secondary); margin-top: 0.25rem; }
+
+.progress-bar-track {
+  height: 6px; background: var(--border); border-radius: 999px;
+  margin-bottom: 1.5rem; overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%; background: oklch(0.55 0.18 150); border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.mission-list { display: flex; flex-direction: column; gap: 0.75rem; }
+.mission-card {
+  padding: 1.25rem; border-radius: 12px; background: var(--surface-1);
+  border: 1px solid var(--border); transition: border-color 0.15s;
+}
+.mission-card.in_progress { border-left: 3px solid oklch(0.55 0.18 150); }
+.mission-card.completed { opacity: 0.7; }
+
+.mission-card-top {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+.mission-type-badge {
+  font-size: 0.625rem; font-weight: 700; text-transform: uppercase;
+  padding: 0.15rem 0.4rem; border-radius: 999px;
+}
+.mission-type-badge.reactive { background: oklch(0.92 0.05 250); color: oklch(0.45 0.1 250); }
+.mission-type-badge.proactive { background: oklch(0.92 0.05 300); color: oklch(0.45 0.1 300); }
+
+.mission-title { font-size: 0.9375rem; font-weight: 600; margin: 0 0 0.375rem; color: var(--text-primary); }
+.mission-desc { font-size: 0.8125rem; color: var(--text-secondary); margin: 0 0 0.75rem; line-height: 1.5; }
+
+.mission-steps {
+  display: flex; flex-direction: column; gap: 0.25rem;
+  padding-top: 0.75rem; border-top: 1px solid var(--border);
+}
+.step-item {
+  display: flex; align-items: flex-start; gap: 0.5rem;
+  font-size: 0.8125rem; color: var(--text-secondary);
+  padding: 0.375rem 0.25rem; border-radius: 6px; cursor: pointer;
+  transition: background 0.1s;
+}
+.step-item:hover { background: oklch(0 0 0 / 0.03); }
+.step-item.done { text-decoration: line-through; opacity: 0.6; }
+.step-check {
+  width: 1.125rem; height: 1.125rem; display: flex; align-items: center;
+  justify-content: center; flex-shrink: 0; font-size: 0.75rem;
+}
+.step-item.done .step-check { color: oklch(0.5 0.18 150); }
+
+.completed-section { margin-top: 2rem; }
 
 /* Spinner */
 .spinner {
@@ -533,6 +693,10 @@ main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
   .tab-badge { background: oklch(0.25 0.05 60); color: oklch(0.75 0.1 60); }
   .status-card { border-color: oklch(0.35 0.06 150); }
   .status-icon { background: oklch(0.25 0.06 150); color: oklch(0.75 0.12 150); }
+  .mission-type-badge.reactive { background: oklch(0.25 0.04 250); color: oklch(0.7 0.08 250); }
+  .mission-type-badge.proactive { background: oklch(0.25 0.04 300); color: oklch(0.7 0.08 300); }
+  .step-item:hover { background: oklch(1 0 0 / 0.03); }
+  .progress-bar-fill { background: oklch(0.6 0.15 150); }
 }
 </style>
 

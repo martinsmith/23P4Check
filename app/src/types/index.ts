@@ -45,6 +45,29 @@ export interface Site {
   updated_at: string
 }
 
+export interface MissionStep {
+  id: number
+  mission_id: number
+  description: string
+  sort: number
+  completed: boolean
+}
+
+export interface Mission {
+  id: number
+  site_id: number
+  slug: string
+  title: string
+  description: string
+  category: string
+  type: 'reactive' | 'proactive'
+  priority: number
+  status: 'pending' | 'in_progress' | 'completed'
+  steps: MissionStep[]
+  created_at: string
+  updated_at: string
+}
+
 export interface ScanResult {
   status?: number
   ttfb_ms?: number
