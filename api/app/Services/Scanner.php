@@ -42,6 +42,11 @@ class Scanner
         $this->checkXmlSitemap($site, $url, $results);
         $this->checkRobotsTxt($site, $url, $results);
         $this->checkGoogleBusinessProfile($site, $html, $results);
+        $this->checkImageAltText($site, $html, $results);
+        $this->checkOpenGraph($site, $html, $results);
+        $this->checkHttpStatusCode($site, $status, $results);
+        $this->checkCompression($site, $url, $results);
+        $this->checkTextToHtmlRatio($site, $html, $results);
 
         $site->update(['last_scanned_at' => now()]);
 
@@ -271,6 +276,105 @@ class Scanner
         }
     }
 
+    private function checkImageAltText(Site $site, string $html, array &$results): void
+    {
+        preg_match_all('/<img[^>]*>/is', $html, $imgMatches);
+        $totalImages = count($imgMatches[0]);
+        $missingAlt = 0;
+
+        foreach ($imgMatches[0] as $imgTag) {
+            if (!preg_match('/\salt=["\'][^"\']*["\']/is', $imgTag) && !preg_match('/\salt\s*=/is', $imgTag)) {
+                $missingAlt++;
+            }
+        }
+
+        $results['images_total'] = $totalImages;
+        $results['images_missing_alt'] = $missingAlt;
+
+        if ($totalImages === 0) {
+            $this->createPassedFinding($site, 'image_alt_text', 'No images found on the page');
+        } elseif ($missingAlt > 0) {
+            $this->createFinding($site, 'image_alt_text', "{$missingAlt} of {$totalImages} images are missing alt text", 'medium');
+        } else {
+            $this->createPassedFinding($site, 'image_alt_text', "All {$totalImages} images have alt text");
+        }
+    }
+
+    private function checkOpenGraph(Site $site, string $html, array &$results): void
+    {
+        $hasOgTitle = (bool) preg_match('/<meta[^>]+property=["\']og:title["\']/is', $html);
+        $hasOgDesc = (bool) preg_match('/<meta[^>]+property=["\']og:description["\']/is', $html);
+        $hasOgImage = (bool) preg_match('/<meta[^>]+property=["\']og:image["\']/is', $html);
+
+        $results['has_og_title'] = $hasOgTitle;
+        $results['has_og_description'] = $hasOgDesc;
+        $results['has_og_image'] = $hasOgImage;
+
+        $missing = [];
+        if (!$hasOgTitle) $missing[] = 'og:title';
+        if (!$hasOgDesc) $missing[] = 'og:description';
+        if (!$hasOgImage) $missing[] = 'og:image';
+
+        if (count($missing) > 0) {
+            $this->createFinding($site, 'open_graph', 'Missing OpenGraph tags: ' . implode(', ', $missing), count($missing) >= 2 ? 'medium' : 'low');
+        } else {
+            $this->createPassedFinding($site, 'open_graph', 'All recommended OpenGraph tags are present');
+        }
+    }
+
+    private function checkHttpStatusCode(Site $site, int $status, array &$results): void
+    {
+        $results['http_status'] = $status;
+
+        if ($status >= 400) {
+            $this->createFinding($site, 'http_status', "Page returned HTTP {$status} error", 'high');
+        } elseif ($status >= 300) {
+            $this->createFinding($site, 'http_status', "Page returned HTTP {$status} redirect", 'medium');
+        } else {
+            $this->createPassedFinding($site, 'http_status', "Page returned HTTP {$status}");
+        }
+    }
+
+    private function checkCompression(Site $site, string $url, array &$results): void
+    {
+        try {
+            $response = Http::timeout(10)
+                ->withHeaders(['Accept-Encoding' => 'gzip, deflate, br'])
+                ->get($url);
+            $encoding = $response->header('Content-Encoding');
+            $hasCompression = !empty($encoding);
+        } catch (\Exception $e) {
+            $hasCompression = false;
+            $encoding = null;
+        }
+
+        $results['has_compression'] = $hasCompression;
+        $results['compression_type'] = $encoding;
+
+        if (!$hasCompression) {
+            $this->createFinding($site, 'compression', 'No compression detected — enable gzip or Brotli to reduce page size', 'medium');
+        } else {
+            $this->createPassedFinding($site, 'compression', "Compression is enabled ({$encoding})");
+        }
+    }
+
+    private function checkTextToHtmlRatio(Site $site, string $html, array &$results): void
+    {
+        $textContent = strip_tags($html);
+        $textContent = preg_replace('/\s+/', ' ', $textContent);
+        $textLen = strlen(trim($textContent));
+        $htmlLen = strlen($html);
+
+        $ratio = $htmlLen > 0 ? round(($textLen / $htmlLen) * 100, 1) : 0;
+        $results['text_to_html_ratio'] = $ratio;
+
+        if ($ratio < 10) {
+            $this->createFinding($site, 'text_html_ratio', "Text-to-HTML ratio is {$ratio}% (recommended: above 10%)", 'low');
+        } else {
+            $this->createPassedFinding($site, 'text_html_ratio', "Text-to-HTML ratio is {$ratio}%");
+        }
+    }
+
     /**
      * Lightweight scan of any URL — returns ['check' => bool] without creating findings.
      * Used for competitor scanning.
@@ -358,6 +462,39 @@ class Scanner
         }
         $checks['google_business_profile'] = $hasGbpLink;
 
+        // Image alt text
+        preg_match_all('/<img[^>]*>/is', $html, $imgMatches);
+        $missingAlt = 0;
+        foreach ($imgMatches[0] as $imgTag) {
+            if (!preg_match('/\salt=["\'][^"\']*["\']/is', $imgTag) && !preg_match('/\salt\s*=/is', $imgTag)) {
+                $missingAlt++;
+            }
+        }
+        $checks['image_alt_text'] = $missingAlt === 0;
+
+        // OpenGraph
+        $checks['open_graph'] = (bool) preg_match('/<meta[^>]+property=["\']og:title["\']/is', $html)
+            && (bool) preg_match('/<meta[^>]+property=["\']og:description["\']/is', $html)
+            && (bool) preg_match('/<meta[^>]+property=["\']og:image["\']/is', $html);
+
+        // HTTP status code
+        $checks['http_status'] = $status >= 200 && $status < 300;
+
+        // Compression
+        try {
+            $compResponse = Http::timeout(10)->withHeaders(['Accept-Encoding' => 'gzip, deflate, br'])->get($url);
+            $checks['compression'] = !empty($compResponse->header('Content-Encoding'));
+        } catch (\Exception $e) {
+            $checks['compression'] = false;
+        }
+
+        // Text-to-HTML ratio
+        $textContent = strip_tags($html);
+        $textContent = preg_replace('/\s+/', ' ', $textContent);
+        $textLen = strlen(trim($textContent));
+        $htmlLen = strlen($html);
+        $checks['text_html_ratio'] = $htmlLen > 0 ? ($textLen / $htmlLen) * 100 >= 10 : false;
+
         return $checks;
     }
 
@@ -409,6 +546,11 @@ class Scanner
             'xml_sitemap'     => 'Create and submit an XML sitemap',
             'robots_txt'      => 'Add a robots.txt file with crawl directives',
             'google_business_profile' => 'Create a Google Business Profile and link to it from your site',
+            'image_alt_text'  => 'Add alt text to all images for accessibility and SEO',
+            'open_graph'      => 'Add OpenGraph tags (og:title, og:description, og:image) for social sharing',
+            'http_status'     => 'Fix the HTTP status code to return 200',
+            'compression'     => 'Enable gzip or Brotli compression on your server',
+            'text_html_ratio' => 'Increase the text-to-HTML ratio by adding more content or reducing code bloat',
             default           => 'Review and fix: ' . $slug,
         };
     }

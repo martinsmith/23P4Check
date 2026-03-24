@@ -208,14 +208,19 @@ class ApiTest extends TestCase
             . '<meta name="viewport" content="width=device-width">'
             . '<link rel="canonical" href="https://example.com">'
             . '<meta name="google-site-verification" content="abc123">'
+            . '<meta property="og:title" content="Test">'
+            . '<meta property="og:description" content="A test page">'
+            . '<meta property="og:image" content="https://example.com/img.jpg">'
             . '<script type="application/ld+json">{"@type":"Organization"}</script>'
             . '<script src="https://www.googletagmanager.com/gtag/js"></script>'
             . '</head><body><h1>Hello</h1>'
+            . '<p>This is a comprehensive test page with enough text content to ensure the text to HTML ratio exceeds the ten percent threshold that is required for the check to pass during automated testing.</p>'
+            . '<img src="logo.png" alt="Logo">'
             . '<a href="https://google.com/maps/place/Example">Find us on Google Maps</a>'
             . '</body></html>';
 
         Http::fake([
-            'https://example.com' => Http::response($html, 200),
+            'https://example.com' => Http::response($html, 200, ['Content-Encoding' => 'gzip']),
             'https://example.com/sitemap.xml' => Http::response('<?xml version="1.0"?><urlset></urlset>', 200),
             'https://example.com/robots.txt' => Http::response("User-agent: *\nAllow: /", 200),
         ]);
@@ -234,17 +239,17 @@ class ApiTest extends TestCase
         $site->refresh();
         $this->assertNotNull($site->last_scanned_at);
 
-        // All 16 checks should pass with the well-formed test HTML
+        // All 21 checks should pass with the well-formed test HTML
         $passedCount = $site->findings()->where('status', 'passed')->count();
-        $this->assertEquals(16, $passedCount, "Expected 16 passed findings, got {$passedCount}");
+        $this->assertEquals(21, $passedCount, "Expected 21 passed findings, got {$passedCount}");
         $this->assertEquals(0, $site->findings()->where('status', 'open')->count());
 
         // Scan snapshot should be recorded
         $this->assertDatabaseHas('scan_snapshots', [
             'site_id'      => $site->id,
-            'passed_count' => 16,
+            'passed_count' => 21,
             'failed_count' => 0,
-            'total_checks' => 16,
+            'total_checks' => 21,
         ]);
     }
 
@@ -476,11 +481,13 @@ class ApiTest extends TestCase
             . '<a href="https://maps.app.goo.gl/abc123">Maps</a>'
             . '</body></html>';
 
-        // Use sequence: first request returns broken, second returns fixed
+        // Use sequence: each scan makes 2 requests (main + compression), so we need 4 entries
         Http::fake([
             'https://example.com' => Http::sequence()
-                ->push($htmlBroken, 200)
-                ->push($htmlFixed, 200),
+                ->push($htmlBroken, 200)   // scan 1: main request
+                ->push($htmlBroken, 200)   // scan 1: compression check
+                ->push($htmlFixed, 200)    // scan 2: main request
+                ->push($htmlFixed, 200),   // scan 2: compression check
             'https://example.com/sitemap.xml' => Http::response('<?xml version="1.0"?><urlset></urlset>', 200),
             'https://example.com/robots.txt' => Http::response("User-agent: *\nAllow: /", 200),
         ]);
@@ -531,13 +538,19 @@ class ApiTest extends TestCase
             . '<meta name="viewport" content="width=device-width">'
             . '<link rel="canonical" href="https://example.com">'
             . '<meta name="google-site-verification" content="abc123">'
+            . '<meta property="og:title" content="Test">'
+            . '<meta property="og:description" content="A test page">'
+            . '<meta property="og:image" content="https://example.com/img.jpg">'
+            . '<script type="application/ld+json">{"@type":"Organization"}</script>'
             . '<script src="https://www.googletagmanager.com/gtag/js"></script>'
             . '</head><body><h1>Hello</h1>'
+            . '<p>This is a comprehensive test page with enough text content to ensure the text to HTML ratio exceeds the ten percent threshold that is required for the check to pass during automated testing.</p>'
+            . '<img src="logo.png" alt="Logo">'
             . '<a href="https://maps.app.goo.gl/abc123">Maps</a>'
             . '</body></html>';
 
         Http::fake([
-            'https://example.com' => Http::response($html, 200),
+            'https://example.com' => Http::response($html, 200, ['Content-Encoding' => 'gzip']),
             'https://example.com/sitemap.xml' => Http::response('<?xml version="1.0"?><urlset></urlset>', 200),
             'https://example.com/robots.txt' => Http::response("User-agent: *\nAllow: /", 200),
         ]);
@@ -568,9 +581,9 @@ class ApiTest extends TestCase
 
         $data = $response->json();
         $this->assertGreaterThan(0, $data['visibility_score']);
-        $this->assertEquals(16, $data['checks']['total']);
+        $this->assertEquals(21, $data['checks']['total']);
         $this->assertCount(1, $data['trend']);
-        $this->assertEquals(16, $data['trend'][0]['total']);
+        $this->assertEquals(21, $data['trend'][0]['total']);
     }
 
     public function test_dashboard_requires_auth(): void
@@ -617,7 +630,7 @@ class ApiTest extends TestCase
         $response->assertOk();
         $response->assertJsonCount(2, 'scans');
         $response->assertJsonPath('scans.0.domain', 'competitor1.com');
-        $this->assertEquals(16, $response->json('scans.0.total'));
+        $this->assertEquals(21, $response->json('scans.0.total'));
 
         // Verify DB records
         $this->assertEquals(2, \App\Models\CompetitorScan::where('site_id', $site->id)->count());

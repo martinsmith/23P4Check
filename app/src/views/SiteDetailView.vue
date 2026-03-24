@@ -158,24 +158,49 @@ const passedFindings = computed(() =>
   (site.value?.findings ?? []).filter(f => f.status === 'passed')
 )
 
+const findingsByCategory = computed(() => {
+  const findings = site.value?.findings ?? []
+  const grouped: Record<string, { passed: typeof findings; failed: typeof findings }> = {}
+  for (const cat of checkCategories) {
+    grouped[cat] = { passed: [], failed: [] }
+  }
+  for (const f of findings) {
+    const cat = checkMeta[f.check]?.category ?? 'Technical SEO'
+    if (!grouped[cat]) grouped[cat] = { passed: [], failed: [] }
+    if (f.status === 'open') grouped[cat].failed.push(f)
+    else grouped[cat].passed.push(f)
+  }
+  return grouped
+})
+
 const checkMeta: Record<string, { label: string; category: string }> = {
+  // Content
   title: { label: 'Title Tag', category: 'Content' },
   meta_description: { label: 'Meta Description', category: 'Content' },
   h1: { label: 'H1 Heading', category: 'Content' },
-  ttfb: { label: 'Time to First Byte', category: 'Performance' },
-  https: { label: 'HTTPS', category: 'Security' },
-  indexability: { label: 'Homepage Indexability', category: 'Technical' },
-  viewport: { label: 'Viewport Meta Tag', category: 'Technical' },
-  canonical: { label: 'Canonical URL', category: 'Technical' },
-  lang_attribute: { label: 'Language Attribute', category: 'Technical' },
-  charset: { label: 'Character Encoding', category: 'Technical' },
-  analytics: { label: 'Analytics Tracking', category: 'Analytics' },
-  gsc_verification: { label: 'Search Console', category: 'Visibility' },
-  structured_data: { label: 'Structured Data', category: 'Technical' },
-  xml_sitemap: { label: 'XML Sitemap', category: 'Technical' },
-  robots_txt: { label: 'robots.txt', category: 'Technical' },
-  google_business_profile: { label: 'Google Business Profile', category: 'Visibility' },
+  structured_data: { label: 'Structured Data', category: 'Content' },
+  image_alt_text: { label: 'Image Alt Text', category: 'Content' },
+  open_graph: { label: 'OpenGraph Tags', category: 'Content' },
+  // Technical SEO
+  https: { label: 'HTTPS', category: 'Technical SEO' },
+  http_status: { label: 'HTTP Status Code', category: 'Technical SEO' },
+  indexability: { label: 'Homepage Indexability', category: 'Technical SEO' },
+  viewport: { label: 'Viewport Meta Tag', category: 'Technical SEO' },
+  canonical: { label: 'Canonical URL', category: 'Technical SEO' },
+  lang_attribute: { label: 'Language Attribute', category: 'Technical SEO' },
+  charset: { label: 'Character Encoding', category: 'Technical SEO' },
+  xml_sitemap: { label: 'XML Sitemap', category: 'Technical SEO' },
+  robots_txt: { label: 'robots.txt', category: 'Technical SEO' },
+  ttfb: { label: 'Time to First Byte', category: 'Technical SEO' },
+  compression: { label: 'Compression', category: 'Technical SEO' },
+  text_html_ratio: { label: 'Text-to-HTML Ratio', category: 'Technical SEO' },
+  // Visibility & Tracking
+  analytics: { label: 'Analytics Tracking', category: 'Visibility & Tracking' },
+  gsc_verification: { label: 'Search Console', category: 'Visibility & Tracking' },
+  google_business_profile: { label: 'Google Business Profile', category: 'Visibility & Tracking' },
 }
+
+const checkCategories = ['Content', 'Technical SEO', 'Visibility & Tracking'] as const
 
 function checkLabel(slug: string): string {
   return checkMeta[slug]?.label ?? slug.replace(/_/g, ' ')
@@ -457,13 +482,20 @@ onMounted(async () => {
             </div>
           </div>
 
-          <!-- Issues -->
-          <section v-if="failedFindings.length" class="findings-section">
-            <h3 class="section-title">Issues to Fix</h3>
-            <div class="card-grid">
-              <div v-for="f in failedFindings" :key="f.id" class="check-card issue">
+          <!-- Grouped by category -->
+          <div v-for="cat in checkCategories" :key="cat" class="category-group">
+            <div class="category-header">
+              <h3 class="category-title">{{ cat }}</h3>
+              <span class="category-counts">
+                <span v-if="findingsByCategory[cat]?.failed.length" class="cat-count issues">{{ findingsByCategory[cat].failed.length }} {{ findingsByCategory[cat].failed.length === 1 ? 'issue' : 'issues' }}</span>
+                <span class="cat-count passed">{{ findingsByCategory[cat]?.passed.length || 0 }} passed</span>
+              </span>
+            </div>
+
+            <!-- Issues in this category -->
+            <div v-if="findingsByCategory[cat]?.failed.length" class="card-grid">
+              <div v-for="f in findingsByCategory[cat].failed" :key="f.id" class="check-card issue">
                 <div class="card-top">
-                  <span class="category-badge">{{ checkCategory(f.check) }}</span>
                   <span class="status-pill severity" :class="f.severity">{{ f.severity }}</span>
                 </div>
                 <h4 class="card-title">{{ checkLabel(f.check) }}</h4>
@@ -477,22 +509,18 @@ onMounted(async () => {
                 <button v-if="f.status === 'open'" class="btn-fix" @click="completeFinding(f.id)">Mark fixed</button>
               </div>
             </div>
-          </section>
 
-          <!-- Passed -->
-          <section v-if="passedFindings.length" class="findings-section">
-            <h3 class="section-title section-title-passed">Passed Checks</h3>
-            <div class="card-grid">
-              <div v-for="f in passedFindings" :key="f.id" class="check-card pass">
+            <!-- Passed in this category -->
+            <div v-if="findingsByCategory[cat]?.passed.length" class="card-grid passed-grid">
+              <div v-for="f in findingsByCategory[cat].passed" :key="f.id" class="check-card pass compact">
                 <div class="card-top">
-                  <span class="category-badge">{{ checkCategory(f.check) }}</span>
-                  <span class="status-pill passed">✓ Passed</span>
+                  <span class="status-pill passed">✓</span>
+                  <h4 class="card-title">{{ checkLabel(f.check) }}</h4>
                 </div>
-                <h4 class="card-title">{{ checkLabel(f.check) }}</h4>
                 <p class="card-desc">{{ f.message }}</p>
               </div>
             </div>
-          </section>
+          </div>
 
           <p v-if="!site.findings?.length" class="empty">No findings yet. Run a scan to check this site.</p>
         </div>
@@ -500,7 +528,7 @@ onMounted(async () => {
         <!-- Sub-tab: Competitors -->
         <div v-if="healthSubTab === 'competitors'" class="competitors-tab">
           <div class="comp-header">
-            <p class="comp-intro">See how your site stacks up against your competitors across all 16 visibility checks.</p>
+            <p class="comp-intro">See how your site stacks up against your competitors across all {{ allCheckSlugs.length }} visibility checks.</p>
             <button class="btn-primary" @click="triggerCompetitorScan" :disabled="scanningCompetitors">
               <span v-if="scanningCompetitors" class="spinner" /> {{ scanningCompetitors ? 'Scanning…' : 'Scan Competitors' }}
             </button>
@@ -542,7 +570,7 @@ onMounted(async () => {
           </div>
 
           <div v-else class="empty">
-            <p>Click "Scan Competitors" to run the 16 visibility checks against your competitors.</p>
+            <p>Click "Scan Competitors" to run the {{ allCheckSlugs.length }} visibility checks against your competitors.</p>
           </div>
         </div>
 
@@ -838,12 +866,35 @@ main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
 }
 .section-title-passed { color: oklch(0.45 0.12 150); }
 
+/* Category groups */
+.category-group {
+  margin-bottom: 2rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.category-group:last-child { border-bottom: none; }
+.category-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.category-title {
+  font-size: 1.1rem; font-weight: 700; color: var(--text-primary);
+  margin: 0;
+}
+.category-counts { display: flex; gap: 0.75rem; }
+.cat-count {
+  font-size: 0.8125rem; font-weight: 600;
+}
+.cat-count.issues { color: oklch(0.55 0.2 25); }
+.cat-count.passed { color: oklch(0.45 0.12 150); }
+
 /* Card grid */
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 0.75rem;
 }
+.passed-grid { margin-top: 0.75rem; }
 .findings-section { margin-bottom: 2.5rem; }
 
 /* Check card */
@@ -876,6 +927,10 @@ main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
 
 /* Passed card accent */
 .check-card.pass { border-color: oklch(0.85 0.08 150); }
+.check-card.compact { padding: 0.75rem 1rem; }
+.check-card.compact .card-top { margin-bottom: 0.25rem; gap: 0.5rem; justify-content: flex-start; }
+.check-card.compact .card-title { margin: 0; font-size: 0.875rem; }
+.check-card.compact .card-desc { font-size: 0.75rem; margin-top: 0.125rem; }
 
 /* Issue card accent */
 .check-card.issue { border-left: 3px solid; }
