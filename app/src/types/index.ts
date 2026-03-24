@@ -100,6 +100,7 @@ export interface DashboardData {
 export interface CompetitorResult {
   competitor_id: number
   domain: string
+  business_name: string | null
   results: Record<string, boolean> | null
   passed: number | null
   failed: number | null

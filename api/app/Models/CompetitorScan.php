@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class CompetitorScan extends Model
 {
-    protected $fillable = ['competitor_id', 'site_id', 'results', 'passed_count', 'failed_count', 'total_checks'];
+    protected $fillable = ['competitor_id', 'site_id', 'business_name', 'results', 'passed_count', 'failed_count', 'total_checks'];
 
     protected function casts(): array
     {

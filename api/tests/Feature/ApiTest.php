@@ -630,6 +630,7 @@ class ApiTest extends TestCase
         $response->assertOk();
         $response->assertJsonCount(2, 'scans');
         $response->assertJsonPath('scans.0.domain', 'competitor1.com');
+        $response->assertJsonPath('scans.0.business_name', 'Comp');
         $this->assertEquals(21, $response->json('scans.0.total'));
 
         // Verify DB records
@@ -671,7 +672,7 @@ class ApiTest extends TestCase
         $response->assertOk();
         $response->assertJsonStructure([
             'own' => ['results', 'passed', 'failed', 'total'],
-            'competitors' => [['competitor_id', 'domain', 'results', 'passed', 'failed', 'total', 'scanned_at']],
+            'competitors' => [['competitor_id', 'domain', 'business_name', 'results', 'passed', 'failed', 'total', 'scanned_at']],
         ]);
         $response->assertJsonPath('competitors.0.domain', 'rival.com');
         $response->assertJsonPath('competitors.0.passed', 2);

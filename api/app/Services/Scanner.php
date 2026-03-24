@@ -396,7 +396,11 @@ class Scanner
 
         // Title
         preg_match('/<title>(.*?)<\/title>/is', $html, $m);
-        $checks['title'] = !empty(trim($m[1] ?? ''));
+        $titleText = trim($m[1] ?? '');
+        $checks['title'] = !empty($titleText);
+
+        // Store site name (title text) as metadata — not a boolean check
+        $checks['_site_name'] = $titleText ?: null;
 
         // Meta description
         preg_match('/<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']/is', $html, $m);
@@ -495,7 +499,11 @@ class Scanner
         $htmlLen = strlen($html);
         $checks['text_html_ratio'] = $htmlLen > 0 ? ($textLen / $htmlLen) * 100 >= 10 : false;
 
-        return $checks;
+        // Extract site_name before returning (not a check, just metadata)
+        $siteName = $checks['_site_name'] ?? null;
+        unset($checks['_site_name']);
+
+        return ['checks' => $checks, 'site_name' => $siteName];
     }
 
     private function createFinding(Site $site, string $slug, string $description, string $severity): void

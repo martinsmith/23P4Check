@@ -540,8 +540,8 @@ onMounted(async () => {
                 <tr>
                   <th class="comp-check-col">Check</th>
                   <th class="comp-site-col you">Your Site</th>
-                  <th v-for="c in competitorData.competitors" :key="c.competitor_id" class="comp-site-col">
-                    {{ c.domain }}
+                  <th v-for="c in competitorData.competitors" :key="c.competitor_id" class="comp-site-col" :title="c.domain">
+                    {{ c.business_name || c.domain }}
                   </th>
                 </tr>
               </thead>

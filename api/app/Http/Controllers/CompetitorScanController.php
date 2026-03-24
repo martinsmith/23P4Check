@@ -30,23 +30,26 @@ class CompetitorScanController extends Controller
             $domain = $competitor->domain;
             $url = str_starts_with($domain, 'http') ? $domain : 'https://' . $domain;
 
-            $checks = $scanner->scanUrl($url);
+            $scanResult = $scanner->scanUrl($url);
 
-            if (isset($checks['error'])) {
+            if (isset($scanResult['error'])) {
                 $results[] = [
                     'competitor_id' => $competitor->id,
                     'domain' => $domain,
-                    'error' => $checks['error'],
+                    'error' => $scanResult['error'],
                 ];
                 continue;
             }
 
+            $checks = $scanResult['checks'];
+            $siteName = $scanResult['site_name'] ?? null;
             $passed = count(array_filter($checks));
             $total = count($checks);
 
             $scan = CompetitorScan::updateOrCreate(
                 ['competitor_id' => $competitor->id, 'site_id' => $site->id],
                 [
+                    'business_name' => $siteName,
                     'results' => $checks,
                     'passed_count' => $passed,
                     'failed_count' => $total - $passed,
@@ -57,6 +60,7 @@ class CompetitorScanController extends Controller
             $results[] = [
                 'competitor_id' => $competitor->id,
                 'domain' => $domain,
+                'business_name' => $siteName,
                 'passed' => $passed,
                 'failed' => $total - $passed,
                 'total' => $total,
@@ -77,14 +81,16 @@ class CompetitorScanController extends Controller
         // Use scanUrl for the user's own site so the comparison is apples-to-apples
         // (findings track nuanced issues like "title too long" as open, but scanUrl
         // uses the same binary pass/fail logic as competitor scans)
-        $ownChecks = $scanner->scanUrl($site->url);
-        if (isset($ownChecks['error'])) {
+        $scanResult = $scanner->scanUrl($site->url);
+        if (isset($scanResult['error'])) {
             // Fall back to findings if the site can't be reached right now
             $findings = $site->findings()->get();
             $ownChecks = [];
             foreach ($findings as $f) {
                 $ownChecks[$f->check] = $f->status === 'passed';
             }
+        } else {
+            $ownChecks = $scanResult['checks'];
         }
         $ownPassed = count(array_filter($ownChecks));
         $ownTotal = count($ownChecks);
@@ -100,6 +106,7 @@ class CompetitorScanController extends Controller
             $competitorResults[] = [
                 'competitor_id' => $competitor->id,
                 'domain' => $competitor->domain,
+                'business_name' => $scan?->business_name ?? null,
                 'results' => $scan?->results ?? null,
                 'passed' => $scan?->passed_count ?? null,
                 'failed' => $scan?->failed_count ?? null,
