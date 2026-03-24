@@ -15,7 +15,8 @@ const loading = ref(true)
 const scanning = ref(false)
 const saving = ref(false)
 const error = ref('')
-const activeTab = ref<'progress' | 'health' | 'growth' | 'competitors'>('progress')
+const activeTab = ref<'progress' | 'health' | 'growth'>('progress')
+const healthSubTab = ref<'checks' | 'competitors'>('checks')
 
 const missions = ref<Mission[]>([])
 const generatingMissions = ref(false)
@@ -289,10 +290,6 @@ onMounted(async () => {
           Growth Plan
           <span v-if="!hasBusinessContext" class="tab-badge">Setup</span>
         </button>
-        <button class="tab" :class="{ active: activeTab === 'competitors' }" @click="activeTab = 'competitors'"
-          v-if="site?.competitors?.length">
-          Competitors
-        </button>
       </nav>
 
       <!-- ===== TAB: Progress ===== -->
@@ -359,60 +356,118 @@ onMounted(async () => {
 
       <!-- ===== TAB: Website Visibility ===== -->
       <div v-if="activeTab === 'health'">
-        <!-- Summary bar -->
-        <div v-if="site.findings?.length" class="summary-bar">
-          <div class="summary-stat" :class="{ 'has-issues': failedFindings.length }">
-            <span class="summary-number">{{ failedFindings.length }}</span>
-            <span class="summary-label">{{ failedFindings.length === 1 ? 'Issue' : 'Issues' }}</span>
+        <!-- Sub-tabs -->
+        <nav class="sub-tabs" v-if="site?.competitors?.length">
+          <button class="sub-tab" :class="{ active: healthSubTab === 'checks' }" @click="healthSubTab = 'checks'">Your Checks</button>
+          <button class="sub-tab" :class="{ active: healthSubTab === 'competitors' }" @click="healthSubTab = 'competitors'">Competitors</button>
+        </nav>
+
+        <!-- Sub-tab: Your Checks -->
+        <div v-if="healthSubTab === 'checks'">
+          <!-- Summary bar -->
+          <div v-if="site.findings?.length" class="summary-bar">
+            <div class="summary-stat" :class="{ 'has-issues': failedFindings.length }">
+              <span class="summary-number">{{ failedFindings.length }}</span>
+              <span class="summary-label">{{ failedFindings.length === 1 ? 'Issue' : 'Issues' }}</span>
+            </div>
+            <div class="summary-stat passed">
+              <span class="summary-number">{{ passedFindings.length }}</span>
+              <span class="summary-label">Passed</span>
+            </div>
+            <div class="summary-stat">
+              <span class="summary-number">{{ (site.findings ?? []).length }}</span>
+              <span class="summary-label">Total Checks</span>
+            </div>
           </div>
-          <div class="summary-stat passed">
-            <span class="summary-number">{{ passedFindings.length }}</span>
-            <span class="summary-label">Passed</span>
-          </div>
-          <div class="summary-stat">
-            <span class="summary-number">{{ (site.findings ?? []).length }}</span>
-            <span class="summary-label">Total Checks</span>
-          </div>
+
+          <!-- Issues -->
+          <section v-if="failedFindings.length" class="findings-section">
+            <h3 class="section-title">Issues to Fix</h3>
+            <div class="card-grid">
+              <div v-for="f in failedFindings" :key="f.id" class="check-card issue">
+                <div class="card-top">
+                  <span class="category-badge">{{ checkCategory(f.check) }}</span>
+                  <span class="status-pill severity" :class="f.severity">{{ f.severity }}</span>
+                </div>
+                <h4 class="card-title">{{ checkLabel(f.check) }}</h4>
+                <p class="card-desc">{{ f.message }}</p>
+                <div v-if="f.tasks.length" class="card-tasks">
+                  <div v-for="t in f.tasks" :key="t.id" class="task-item" :class="{ done: t.completed }">
+                    <span class="task-icon">{{ t.completed ? '✓' : '○' }}</span>
+                    <span>{{ t.description }}</span>
+                  </div>
+                </div>
+                <button v-if="f.status === 'open'" class="btn-fix" @click="completeFinding(f.id)">Mark fixed</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Passed -->
+          <section v-if="passedFindings.length" class="findings-section">
+            <h3 class="section-title section-title-passed">Passed Checks</h3>
+            <div class="card-grid">
+              <div v-for="f in passedFindings" :key="f.id" class="check-card pass">
+                <div class="card-top">
+                  <span class="category-badge">{{ checkCategory(f.check) }}</span>
+                  <span class="status-pill passed">✓ Passed</span>
+                </div>
+                <h4 class="card-title">{{ checkLabel(f.check) }}</h4>
+                <p class="card-desc">{{ f.message }}</p>
+              </div>
+            </div>
+          </section>
+
+          <p v-if="!site.findings?.length" class="empty">No findings yet. Run a scan to check this site.</p>
         </div>
 
-        <!-- Issues -->
-        <section v-if="failedFindings.length" class="findings-section">
-          <h3 class="section-title">Issues to Fix</h3>
-          <div class="card-grid">
-            <div v-for="f in failedFindings" :key="f.id" class="check-card issue">
-              <div class="card-top">
-                <span class="category-badge">{{ checkCategory(f.check) }}</span>
-                <span class="status-pill severity" :class="f.severity">{{ f.severity }}</span>
-              </div>
-              <h4 class="card-title">{{ checkLabel(f.check) }}</h4>
-              <p class="card-desc">{{ f.message }}</p>
-              <div v-if="f.tasks.length" class="card-tasks">
-                <div v-for="t in f.tasks" :key="t.id" class="task-item" :class="{ done: t.completed }">
-                  <span class="task-icon">{{ t.completed ? '✓' : '○' }}</span>
-                  <span>{{ t.description }}</span>
-                </div>
-              </div>
-              <button v-if="f.status === 'open'" class="btn-fix" @click="completeFinding(f.id)">Mark fixed</button>
-            </div>
+        <!-- Sub-tab: Competitors -->
+        <div v-if="healthSubTab === 'competitors'" class="competitors-tab">
+          <div class="comp-header">
+            <p class="comp-intro">See how your site stacks up against your competitors across all 16 visibility checks.</p>
+            <button class="btn-primary" @click="triggerCompetitorScan" :disabled="scanningCompetitors">
+              <span v-if="scanningCompetitors" class="spinner" /> {{ scanningCompetitors ? 'Scanning…' : 'Scan Competitors' }}
+            </button>
           </div>
-        </section>
 
-        <!-- Passed -->
-        <section v-if="passedFindings.length" class="findings-section">
-          <h3 class="section-title section-title-passed">Passed Checks</h3>
-          <div class="card-grid">
-            <div v-for="f in passedFindings" :key="f.id" class="check-card pass">
-              <div class="card-top">
-                <span class="category-badge">{{ checkCategory(f.check) }}</span>
-                <span class="status-pill passed">✓ Passed</span>
-              </div>
-              <h4 class="card-title">{{ checkLabel(f.check) }}</h4>
-              <p class="card-desc">{{ f.message }}</p>
-            </div>
+          <div v-if="competitorData" class="comp-table-wrap">
+            <table class="comp-table">
+              <thead>
+                <tr>
+                  <th class="comp-check-col">Check</th>
+                  <th class="comp-site-col you">Your Site</th>
+                  <th v-for="c in competitorData.competitors" :key="c.competitor_id" class="comp-site-col">
+                    {{ c.domain }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="slug in allCheckSlugs" :key="slug">
+                  <td class="comp-check-name">{{ checkLabel(slug) }}</td>
+                  <td class="comp-cell" :class="competitorData.own.results[slug] ? 'pass' : 'fail'">
+                    {{ competitorData.own.results[slug] === undefined ? '—' : competitorData.own.results[slug] ? '✓' : '✗' }}
+                  </td>
+                  <td v-for="c in competitorData.competitors" :key="c.competitor_id" class="comp-cell"
+                    :class="c.results?.[slug] ? 'pass' : c.results?.[slug] === false ? 'fail' : ''">
+                    {{ c.results == null ? '—' : c.results[slug] ? '✓' : '✗' }}
+                  </td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr class="comp-totals">
+                  <td>Score</td>
+                  <td class="comp-cell you">{{ competitorData.own.passed }}/{{ competitorData.own.total }}</td>
+                  <td v-for="c in competitorData.competitors" :key="c.competitor_id" class="comp-cell">
+                    {{ c.passed != null ? `${c.passed}/${c.total}` : '—' }}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
           </div>
-        </section>
 
-        <p v-if="!site.findings?.length" class="empty">No findings yet. Run a scan to check this site.</p>
+          <div v-else class="empty">
+            <p>Click "Scan Competitors" to run the 16 visibility checks against your competitors.</p>
+          </div>
+        </div>
       </div>
 
       <!-- ===== TAB: Growth Plan ===== -->
@@ -520,54 +575,6 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- ===== TAB: Competitors ===== -->
-      <div v-if="activeTab === 'competitors'" class="competitors-tab">
-        <div class="comp-header">
-          <p class="comp-intro">See how your site stacks up against your competitors across all 16 visibility checks.</p>
-          <button class="btn-primary" @click="triggerCompetitorScan" :disabled="scanningCompetitors">
-            <span v-if="scanningCompetitors" class="spinner" /> {{ scanningCompetitors ? 'Scanning…' : 'Scan Competitors' }}
-          </button>
-        </div>
-
-        <div v-if="competitorData" class="comp-table-wrap">
-          <table class="comp-table">
-            <thead>
-              <tr>
-                <th class="comp-check-col">Check</th>
-                <th class="comp-site-col you">Your Site</th>
-                <th v-for="c in competitorData.competitors" :key="c.competitor_id" class="comp-site-col">
-                  {{ c.domain }}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="slug in allCheckSlugs" :key="slug">
-                <td class="comp-check-name">{{ checkLabel(slug) }}</td>
-                <td class="comp-cell" :class="competitorData.own.results[slug] ? 'pass' : 'fail'">
-                  {{ competitorData.own.results[slug] === undefined ? '—' : competitorData.own.results[slug] ? '✓' : '✗' }}
-                </td>
-                <td v-for="c in competitorData.competitors" :key="c.competitor_id" class="comp-cell"
-                  :class="c.results?.[slug] ? 'pass' : c.results?.[slug] === false ? 'fail' : ''">
-                  {{ c.results == null ? '—' : c.results[slug] ? '✓' : '✗' }}
-                </td>
-              </tr>
-            </tbody>
-            <tfoot>
-              <tr class="comp-totals">
-                <td>Score</td>
-                <td class="comp-cell you">{{ competitorData.own.passed }}/{{ competitorData.own.total }}</td>
-                <td v-for="c in competitorData.competitors" :key="c.competitor_id" class="comp-cell">
-                  {{ c.passed != null ? `${c.passed}/${c.total}` : '—' }}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-
-        <div v-else class="empty">
-          <p>Click "Scan Competitors" to run the 16 visibility checks against your competitors.</p>
-        </div>
-      </div>
     </main>
   </div>
 </template>
@@ -723,6 +730,20 @@ main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
   padding: 0.1rem 0.4rem; border-radius: 999px;
   background: oklch(0.92 0.05 60); color: oklch(0.45 0.12 60);
 }
+
+/* Sub-tabs (within Website Visibility) */
+.sub-tabs {
+  display: flex; gap: 0; margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+.sub-tab {
+  padding: 0.5rem 1rem; border: none; background: none;
+  font-size: 0.8125rem; font-weight: 600; color: var(--text-tertiary);
+  cursor: pointer; border-bottom: 2px solid transparent;
+  margin-bottom: -1px; transition: color 0.15s, border-color 0.15s;
+}
+.sub-tab:hover { color: var(--text-primary); }
+.sub-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
 /* Growth Plan tab */
 .growth-tab { max-width: 640px; }
