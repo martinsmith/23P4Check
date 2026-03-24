@@ -166,6 +166,11 @@ class ApiTest extends TestCase
 
         $site->refresh();
         $this->assertNotNull($site->last_scanned_at);
+
+        // All 15 checks should pass with the well-formed test HTML
+        $passedCount = $site->findings()->where('status', 'passed')->count();
+        $this->assertEquals(15, $passedCount, "Expected 15 passed findings, got {$passedCount}");
+        $this->assertEquals(0, $site->findings()->where('status', 'open')->count());
     }
 
     // --- Complete Finding ---

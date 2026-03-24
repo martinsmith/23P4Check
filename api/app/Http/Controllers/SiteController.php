@@ -35,7 +35,10 @@ class SiteController extends Controller
     {
         abort_unless($site->user_id === $request->user()->id, 403);
 
-        $site->load(['findings' => fn ($q) => $q->where('status', 'open')->with('tasks')]);
+        $site->load(['findings' => fn ($q) => $q->whereIn('status', ['open', 'passed'])
+            ->orderByRaw("CASE status WHEN 'open' THEN 0 WHEN 'passed' THEN 1 ELSE 2 END")
+            ->orderByRaw("CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END")
+            ->with('tasks')]);
 
         return response()->json(['site' => $site]);
     }

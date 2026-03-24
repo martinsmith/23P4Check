@@ -18,7 +18,7 @@ export interface Finding {
   check: string
   message: string
   severity: 'high' | 'medium' | 'low'
-  status: 'open' | 'fixed'
+  status: 'open' | 'fixed' | 'passed'
   tasks: Task[]
   created_at: string
 }
